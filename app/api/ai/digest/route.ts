@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { generateJSON } from "@/app/lib/gemini";
+import { recordQuotaUsage, attachQuotaCookie } from "@/app/lib/ai-quota";
 import type { WeeklyDigest } from "@/app/lib/ai-types";
 import type { Expense } from "@/app/lib/types";
 
@@ -27,10 +28,13 @@ function isWeeklyDigest(data: unknown): data is WeeklyDigest {
 }
 
 export async function POST(request: NextRequest) {
+  const quota = recordQuotaUsage(request);
+
   try {
     const { expenses } = (await request.json()) as { expenses?: Expense[] };
     if (!expenses || expenses.length === 0) {
-      return NextResponse.json({ error: "No expense data provided." }, { status: 400 });
+      const response = NextResponse.json({ error: "No expense data provided.", quota }, { status: 400 });
+      return attachQuotaCookie(response, quota);
     }
 
     // Compute week bounds (last 7 days)
@@ -122,12 +126,14 @@ Rules:
 - be encouraging, not preachy`;
 
     const digest = await generateJSON<WeeklyDigest>(prompt, isWeeklyDigest);
-    return NextResponse.json(digest);
+    const response = NextResponse.json({ ...digest, quota });
+    return attachQuotaCookie(response, quota);
   } catch (err) {
     console.error("[digest]", err);
-    return NextResponse.json(
-      { error: "Failed to generate digest. Please try again." },
+    const response = NextResponse.json(
+      { error: "Failed to generate digest. Please try again.", quota },
       { status: 500 }
     );
+    return attachQuotaCookie(response, quota);
   }
 }

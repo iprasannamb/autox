@@ -1,19 +1,24 @@
 /**
  * POST /api/ai/coach
  * AI Money Coach — multi-turn chat with user financial context.
+ * Includes AI quota tracking.
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { generateChat } from "@/app/lib/gemini";
+import { generateChat, generateChatStream } from "@/app/lib/gemini";
+import { recordQuotaUsage, attachQuotaCookie } from "@/app/lib/ai-quota";
 import type { CoachRequest } from "@/app/lib/ai-types";
 
 export async function POST(request: NextRequest) {
+  const quota = recordQuotaUsage(request);
+
   try {
     const body = (await request.json()) as Partial<CoachRequest>;
-    const { message, history = [], context } = body;
+    const { message, history = [], context, stream = false } = body;
 
     if (!message || message.trim().length === 0) {
-      return NextResponse.json({ error: "No message provided." }, { status: 400 });
+      const response = NextResponse.json({ error: "No message provided.", quota }, { status: 400 });
+      return attachQuotaCookie(response, quota);
     }
 
     const contextBlock = context
@@ -42,13 +47,39 @@ Your role:
       parts: [{ text: m.content }],
     }));
 
+    if (stream) {
+      const encoder = new TextEncoder();
+      const readable = new ReadableStream({
+        async start(controller) {
+          try {
+            for await (const chunk of generateChatStream(systemInstruction, geminiHistory, message.trim())) {
+              controller.enqueue(encoder.encode(chunk));
+            }
+            controller.close();
+          } catch (err) {
+            controller.error(err);
+          }
+        },
+      });
+
+      return new Response(readable, {
+        headers: {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-cache, no-transform",
+          "X-AI-Quota-Remaining": String(quota.remaining),
+        },
+      });
+    }
+
     const reply = await generateChat(systemInstruction, geminiHistory, message.trim());
-    return NextResponse.json({ reply });
+    const response = NextResponse.json({ reply, quota });
+    return attachQuotaCookie(response, quota);
   } catch (err) {
     console.error("[coach]", err);
-    return NextResponse.json(
-      { error: "The AI coach is unavailable right now. Please try again." },
+    const response = NextResponse.json(
+      { error: "The AI coach is unavailable right now. Please try again.", quota },
       { status: 500 }
     );
+    return attachQuotaCookie(response, quota);
   }
 }

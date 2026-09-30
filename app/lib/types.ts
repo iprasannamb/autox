@@ -1,5 +1,7 @@
 // ── Database row types ────────────────────────────────────────────────────────
 
+export type RecurringFrequency = "daily" | "weekly" | "monthly" | "yearly";
+
 export interface Expense {
   id: string;
   user_id: string;
@@ -9,7 +11,7 @@ export interface Expense {
   expense_date: string; // "YYYY-MM-DD"
   notes: string | null;
   is_recurring: boolean;
-  recurring_frequency: "weekly" | "monthly" | "yearly" | null;
+  recurring_frequency: RecurringFrequency | null;
   created_at: string;
 }
 

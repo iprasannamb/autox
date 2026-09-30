@@ -1,10 +1,12 @@
 /**
  * POST /api/ai/classify-expenses
  * Accepts messy text input and returns structured classified expenses via Gemini.
+ * Includes AI quota tracking and failsafe offline heuristic recovery.
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { generateJSON } from "@/app/lib/gemini";
+import { generateJSON, parseMessyExpenses } from "@/app/lib/gemini";
+import { recordQuotaUsage, attachQuotaCookie } from "@/app/lib/ai-quota";
 import type { ClassifyExpensesResponse } from "@/app/lib/ai-types";
 
 function isClassifyResponse(data: unknown): data is ClassifyExpensesResponse {
@@ -22,10 +24,26 @@ function isClassifyResponse(data: unknown): data is ClassifyExpensesResponse {
 }
 
 export async function POST(request: NextRequest) {
+  let quota = recordQuotaUsage(request);
+
   try {
-    const { text } = (await request.json()) as { text?: string };
+    const body = (await request.json()) as { text?: string };
+    const text = body.text ?? "";
+
     if (!text || text.trim().length === 0) {
-      return NextResponse.json({ error: "No text provided." }, { status: 400 });
+      const response = NextResponse.json({ error: "No text provided.", quota }, { status: 400 });
+      return attachQuotaCookie(response, quota);
+    }
+
+    // If quota is exhausted, use fast local heuristic parsing immediately
+    if (quota.status === "exhausted") {
+      const heuristicExpenses = parseMessyExpenses(text);
+      const response = NextResponse.json({
+        expenses: heuristicExpenses,
+        quota,
+        notice: "Daily Gemini API limit reached (25/25). Processed instantly via autoX Smart Heuristic Engine.",
+      });
+      return attachQuotaCookie(response, quota);
     }
 
     const prompt = `You are a financial expense classifier for Indian users.
@@ -49,13 +67,34 @@ Rules:
 - if no amount is specified, use 0
 - return an empty array if nothing recognizable is found`;
 
-    const result = await generateJSON<ClassifyExpensesResponse>(prompt, isClassifyResponse);
-    return NextResponse.json(result);
+    try {
+      const result = await generateJSON<ClassifyExpensesResponse>(prompt, isClassifyResponse);
+      const response = NextResponse.json({
+        expenses: result.expenses ?? [],
+        quota,
+      });
+      return attachQuotaCookie(response, quota);
+    } catch (genErr) {
+      console.warn("[classify-expenses] Model generation failed, running resilient heuristic parser", genErr);
+      const fallbackExpenses = parseMessyExpenses(text);
+      const response = NextResponse.json({
+        expenses: fallbackExpenses,
+        quota: { ...quota, isFallback: true },
+        notice: "Processed via autoX Smart Offline Parser.",
+      });
+      return attachQuotaCookie(response, quota);
+    }
   } catch (err) {
-    console.error("[classify-expenses]", err);
-    return NextResponse.json(
-      { error: "Failed to classify expenses. Please try again." },
-      { status: 500 }
+    console.error("[classify-expenses fatal]", err);
+    // Even on fatal request error, provide empty array rather than blocking user
+    const response = NextResponse.json(
+      {
+        expenses: [],
+        quota,
+        error: "Failed to parse input. Please try entering something like 'Swiggy 450, Uber 230'.",
+      },
+      { status: 200 } // Return 200 with error info so UI handles it gracefully
     );
+    return attachQuotaCookie(response, quota);
   }
 }

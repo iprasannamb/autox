@@ -1,10 +1,12 @@
 /**
  * POST /api/ai/whatif
  * Natural Language What-If — Gemini parses the habit, app logic computes projections.
+ * Includes AI quota tracking.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { generateJSON } from "@/app/lib/gemini";
+import { recordQuotaUsage, attachQuotaCookie } from "@/app/lib/ai-quota";
 import type { WhatIfParsed, WhatIfResponse } from "@/app/lib/ai-types";
 
 const SCENARIOS = [
@@ -31,10 +33,13 @@ function futureValueRecurring(monthlyPmt: number, annualRate: number, years: num
 }
 
 export async function POST(request: NextRequest) {
+  const quota = recordQuotaUsage(request);
+
   try {
     const { query } = (await request.json()) as { query?: string };
     if (!query || query.trim().length === 0) {
-      return NextResponse.json({ error: "No query provided." }, { status: 400 });
+      const response = NextResponse.json({ error: "No query provided.", quota }, { status: 400 });
+      return attachQuotaCookie(response, quota);
     }
 
     const prompt = `You are a financial habit parser for Indian users.
@@ -68,13 +73,15 @@ Return ONLY valid JSON in this exact shape:
       fv20yr: futureValueRecurring(monthlyAmount, s.rate, 20),
     }));
 
-    const result: WhatIfResponse = { parsed, projections };
-    return NextResponse.json(result);
+    const result: WhatIfResponse = { parsed, projections, quota };
+    const response = NextResponse.json(result);
+    return attachQuotaCookie(response, quota);
   } catch (err) {
     console.error("[whatif]", err);
-    return NextResponse.json(
-      { error: "Failed to process your what-if query. Please try again." },
+    const response = NextResponse.json(
+      { error: "Failed to process your what-if query. Please try again.", quota },
       { status: 500 }
     );
+    return attachQuotaCookie(response, quota);
   }
 }

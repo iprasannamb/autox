@@ -4,199 +4,172 @@ import { useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { createClient } from "@/utils/supabase/client";
-import { useRouter } from "next/navigation";
 import {
-  LayoutDashboard, Receipt, TrendingUp, Calculator, Sparkles,
-  LogOut, ChevronRight, ChevronLeft, Menu, X,
+  LayoutDashboard, Receipt, Wallet, Calculator, Sparkles,
+  LogOut, ChevronLeft, ChevronRight, Menu, X, Bell, Search,
 } from "lucide-react";
 
-// ── Navigation config (auto-derived from actual app routes + tabs) ────────────
-
-interface NavChild { label: string; href: string; tab?: string }
+// ── Navigation items ──────────────────────────────────────────────────────────
 
 interface NavItem {
   label: string;
   href: string;
   icon: React.ElementType;
   badge?: string;
-  children?: NavChild[];
 }
 
-const NAV: NavItem[] = [
-  {
-    label: "Dashboard",
-    href: "/dashboard",
-    icon: LayoutDashboard,
-    children: [
-      { label: "Home",             href: "/dashboard", tab: "home" },
-      { label: "Expenses",         href: "/dashboard", tab: "expenses" },
-      { label: "Projections",      href: "/dashboard", tab: "chart" },
-    ],
-  },
-  {
-    label: "Calculator",
-    href: "/calculator",
-    icon: Calculator,
-  },
-  {
-    label: "AI Features",
-    href: "/dashboard",
-    icon: Sparkles,
-    badge: "AI",
-    children: [
-      { label: "Smart Classifier", href: "/dashboard", tab: "ai" },
-      { label: "What-If Analyzer", href: "/dashboard", tab: "ai" },
-      { label: "Weekly Digest",    href: "/dashboard", tab: "ai" },
-    ],
-  },
+const NAV_ITEMS: NavItem[] = [
+  { label: "Dashboard",  href: "/dashboard",  icon: LayoutDashboard },
+  { label: "Expenses",   href: "/expenses",   icon: Receipt },
+  { label: "Budget",     href: "/budget",      icon: Wallet },
+  { label: "Calculator", href: "/calculator",  icon: Calculator },
+  { label: "AI Insights", href: "/ai",         icon: Sparkles, badge: "AI" },
 ];
 
-// ── NavLink ───────────────────────────────────────────────────────────────────
+// ── Desktop sidebar ───────────────────────────────────────────────────────────
 
-function NavLink({
-  item, collapsed, activeTab, onTabChange,
+function DesktopSidebar({
+  collapsed,
+  user,
+  onSignOut,
 }: {
-  item: NavItem;
   collapsed: boolean;
-  activeTab?: string;
-  onTabChange?: (tab: string) => void;
+  user?: { email?: string; name?: string } | null;
+  onSignOut: () => void;
 }) {
   const pathname = usePathname();
-  const [open, setOpen] = useState(() => !!item.children && pathname.startsWith(item.href));
-  const isActive       = pathname === item.href && !item.children;
-  const isParentActive = !!item.children && pathname.startsWith(item.href);
-  const Icon = item.icon;
 
-  return (
-    <div>
-      {item.children ? (
-        <button
-          onClick={() => setOpen((v) => !v)}
-          title={collapsed ? item.label : undefined}
-          className={`group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-150 ${
-            isParentActive
-              ? "bg-sky-50 text-sky-700"
-              : "text-[#3D5A73] hover:bg-[#EBF0F5] hover:text-[#0D1B2A]"
-          }`}
-        >
-          <Icon size={16} className={`shrink-0 ${isParentActive ? "text-sky-500" : "text-[#8BA3B8] group-hover:text-[#3D5A73]"}`} />
-          {!collapsed && (
-            <>
-              <span className="flex-1 text-left">{item.label}</span>
-              {item.badge && (
-                <span className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-600">{item.badge}</span>
-              )}
-              <ChevronRight size={12} className={`text-[#8BA3B8] transition-transform duration-200 ${open ? "rotate-90" : ""}`} />
-            </>
-          )}
-        </button>
-      ) : (
-        <Link
-          href={item.href}
-          title={collapsed ? item.label : undefined}
-          className={`group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-150 ${
-            isActive
-              ? "bg-sky-50 text-sky-700"
-              : "text-[#3D5A73] hover:bg-[#EBF0F5] hover:text-[#0D1B2A]"
-          }`}
-        >
-          <Icon size={16} className={`shrink-0 ${isActive ? "text-sky-500" : "text-[#8BA3B8] group-hover:text-[#3D5A73]"}`} />
-          {!collapsed && <span className="flex-1">{item.label}</span>}
-        </Link>
-      )}
-
-      {/* Children */}
-      <AnimatePresence initial={false}>
-        {item.children && open && !collapsed && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.18, ease: "easeInOut" }}
-            className="overflow-hidden"
-          >
-            <div className="ml-8 mt-0.5 space-y-0.5 border-l border-[#DDE5EE] pl-3">
-              {item.children.map((child) => {
-                const childActive = usePathname() === child.href && child.tab === activeTab;
-                return (
-                  <button
-                    key={child.label}
-                    onClick={() => { if (child.tab && onTabChange) onTabChange(child.tab); }}
-                    className={`block w-full rounded-lg px-2 py-1.5 text-left text-xs transition-all ${
-                      childActive
-                        ? "font-semibold text-sky-600"
-                        : "text-[#8BA3B8] hover:text-[#0D1B2A]"
-                    }`}
-                  >
-                    {child.label}
-                  </button>
-                );
-              })}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
-
-// ── Sidebar ───────────────────────────────────────────────────────────────────
-
-function Sidebar({
-  collapsed, user, onSignOut, activeTab, onTabChange,
-}: {
-  collapsed: boolean;
-  user?: { email?: string } | null;
-  onSignOut: () => void;
-  activeTab?: string;
-  onTabChange?: (tab: string) => void;
-}) {
   return (
     <div className="flex h-full flex-col">
       {/* Logo */}
-      <div className={`flex h-14 shrink-0 items-center border-b border-[#DDE5EE] ${collapsed ? "justify-center px-3" : "px-5"}`}>
+      <div className={`flex h-[60px] shrink-0 items-center border-b border-[#E2E8F0] ${collapsed ? "justify-center px-3" : "px-5"}`}>
         <Link href="/" className="flex items-center gap-2.5">
-          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-sky-500 shadow-[0_2px_8px_0_rgb(14_165_233/0.3)]">
+          <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-sky-400 to-sky-600 shadow-[0_2px_8px_0_rgb(14_165_233/0.3)]">
             <span className="text-sm font-extrabold text-white">X</span>
           </div>
           {!collapsed && (
-            <span className="text-base font-extrabold tracking-tight text-[#0D1B2A]">
+            <span className="text-[15px] font-extrabold tracking-tight text-[#0D1B2A]">
               auto<span className="text-sky-500">X</span>
             </span>
           )}
         </Link>
       </div>
 
-      {/* Nav items */}
-      <nav className="flex-1 overflow-y-auto px-2 py-3">
-        <div className="space-y-0.5">
-          {NAV.map((item) => (
-            <NavLink
-              key={item.label}
-              item={item}
-              collapsed={collapsed}
-              activeTab={activeTab}
-              onTabChange={onTabChange}
-            />
-          ))}
+      {/* Nav */}
+      <nav className="flex-1 overflow-y-auto px-3 py-4">
+        <div className="space-y-1">
+          {NAV_ITEMS.map((item) => {
+            const Icon = item.icon;
+            const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                title={collapsed ? item.label : undefined}
+                className={`group flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition-all duration-150 ${
+                  isActive
+                    ? "bg-sky-50 text-sky-700 shadow-[inset_0_0_0_1px_rgb(14_165_233/0.15)]"
+                    : "text-[#3D5A73] hover:bg-[#F0F4F8] hover:text-[#0D1B2A]"
+                } ${collapsed ? "justify-center" : ""}`}
+              >
+                <Icon
+                  size={18}
+                  className={`shrink-0 ${isActive ? "text-sky-500" : "text-[#8BA3B8] group-hover:text-[#3D5A73]"}`}
+                />
+                {!collapsed && (
+                  <>
+                    <span className="flex-1">{item.label}</span>
+                    {item.badge && (
+                      <span className="rounded-full bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-600">
+                        {item.badge}
+                      </span>
+                    )}
+                  </>
+                )}
+              </Link>
+            );
+          })}
         </div>
       </nav>
 
       {/* User footer */}
-      <div className="shrink-0 border-t border-[#DDE5EE] p-2">
-        {!collapsed && user?.email && (
-          <p className="mb-1.5 truncate px-2 text-[11px] text-[#8BA3B8]">{user.email}</p>
+      <div className="shrink-0 border-t border-[#E2E8F0] p-3">
+        {!collapsed && user && (
+          <div className="mb-2 flex items-center gap-2.5 rounded-xl bg-[#F8FAFC] px-3 py-2">
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-sky-400 to-sky-600 text-[11px] font-bold text-white">
+              {(user.name || user.email || "U").charAt(0).toUpperCase()}
+            </div>
+            <div className="min-w-0">
+              <p className="truncate text-xs font-semibold text-[#0D1B2A] capitalize">
+                {user.name || user.email?.split("@")[0] || "User"}
+              </p>
+              <p className="truncate text-[10px] text-[#8BA3B8]">{user.email}</p>
+            </div>
+          </div>
         )}
         <button
-          id="btn-signout"
           onClick={onSignOut}
           title={collapsed ? "Sign out" : undefined}
           className={`group flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-xs font-medium text-[#8BA3B8] transition-all hover:bg-red-50 hover:text-red-500 ${collapsed ? "justify-center" : ""}`}
         >
-          <LogOut size={14} />
+          <LogOut size={15} />
           {!collapsed && "Sign out"}
         </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Mobile bottom tab bar ─────────────────────────────────────────────────────
+
+function MobileBottomNav() {
+  const pathname = usePathname();
+
+  return (
+    <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-[#E2E8F0] bg-white/95 backdrop-blur-md lg:hidden">
+      <div className="flex items-stretch">
+        {NAV_ITEMS.map((item) => {
+          const Icon = item.icon;
+          const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={`relative flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] font-medium transition-colors ${
+                isActive ? "text-sky-600" : "text-[#8BA3B8]"
+              }`}
+            >
+              {isActive && (
+                <motion.div
+                  layoutId="bottomNavIndicator"
+                  className="absolute top-0 h-[2px] w-8 rounded-full bg-sky-500"
+                  transition={{ type: "spring", stiffness: 400, damping: 30 }}
+                />
+              )}
+              <Icon size={20} strokeWidth={isActive ? 2.2 : 1.8} />
+              <span>{item.label === "AI Insights" ? "AI" : item.label}</span>
+            </Link>
+          );
+        })}
+      </div>
+      {/* Safe area padding for iOS */}
+      <div className="h-[env(safe-area-inset-bottom)]" />
+    </nav>
+  );
+}
+
+// ── Loading skeleton ──────────────────────────────────────────────────────────
+
+export function PageSkeleton() {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-[#F0F4F8]">
+      <div className="text-center">
+        <motion.div
+          animate={{ rotate: 360 }}
+          transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+          className="mx-auto mb-3 h-8 w-8 rounded-full border-2 border-sky-200 border-t-sky-500"
+        />
+        <p className="text-xs font-medium text-[#8BA3B8]">Loading autoX…</p>
       </div>
     </div>
   );
@@ -206,81 +179,104 @@ function Sidebar({
 
 interface AppShellProps {
   children: React.ReactNode;
-  user?: { email?: string } | null;
-  activeTab?: string;
-  onTabChange?: (tab: string) => void;
+  user?: { email?: string; name?: string } | null;
+  onSignOut?: () => void;
 }
 
-export default function AppShell({ children, user, activeTab, onTabChange }: AppShellProps) {
-  const router = useRouter();
-  const [collapsed, setCollapsed]     = useState(false);
-  const [mobileOpen, setMobileOpen]   = useState(false);
+export default function AppShell({ children, user, onSignOut }: AppShellProps) {
+  const [collapsed, setCollapsed] = useState(false);
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const pathname = usePathname();
 
-  useEffect(() => { setMobileOpen(false); }, [pathname]);
+  // Close mobile drawer on navigation
+  useEffect(() => {
+    setMobileDrawerOpen(false);
+  }, [pathname]);
 
-  async function handleSignOut() {
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    router.push("/signin");
-  }
-
-  const sidebarProps = { collapsed, user, onSignOut: handleSignOut, activeTab, onTabChange };
+  const handleSignOut = onSignOut || (() => {});
 
   return (
     <div className="flex min-h-screen bg-[#F0F4F8]">
-      {/* Desktop sidebar */}
+      {/* ── Desktop sidebar ──────────────────────────────────── */}
       <motion.aside
-        animate={{ width: collapsed ? 64 : 240 }}
-        transition={{ duration: 0.22, ease: "easeInOut" }}
-        className="relative hidden shrink-0 border-r border-[#DDE5EE] bg-white lg:flex lg:flex-col"
+        animate={{ width: collapsed ? 68 : 240 }}
+        transition={{ duration: 0.2, ease: "easeInOut" }}
+        className="relative hidden shrink-0 border-r border-[#E2E8F0] bg-white lg:flex lg:flex-col"
         style={{ overflow: "visible" }}
       >
-        <Sidebar {...sidebarProps} />
+        <DesktopSidebar collapsed={collapsed} user={user} onSignOut={handleSignOut} />
 
         {/* Collapse toggle */}
         <button
           onClick={() => setCollapsed((v) => !v)}
-          className="absolute -right-3.5 top-[54px] z-10 flex h-7 w-7 items-center justify-center rounded-full border border-[#DDE5EE] bg-white text-[#8BA3B8] shadow-sm transition-all hover:border-sky-300 hover:text-sky-500"
+          className="absolute -right-3 top-[68px] z-10 flex h-6 w-6 items-center justify-center rounded-full border border-[#E2E8F0] bg-white text-[#8BA3B8] shadow-sm transition-all hover:border-sky-300 hover:text-sky-500"
           title={collapsed ? "Expand" : "Collapse"}
         >
-          {collapsed ? <ChevronRight size={13} /> : <ChevronLeft size={13} />}
+          {collapsed ? <ChevronRight size={12} /> : <ChevronLeft size={12} />}
         </button>
       </motion.aside>
 
-      {/* Mobile sidebar */}
+      {/* ── Mobile drawer overlay ────────────────────────────── */}
       <AnimatePresence>
-        {mobileOpen && (
+        {mobileDrawerOpen && (
           <>
-            <motion.div className="fixed inset-0 z-40 bg-black/20 backdrop-blur-[2px] lg:hidden"
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}
-              onClick={() => setMobileOpen(false)} />
+            <motion.div
+              className="fixed inset-0 z-40 bg-black/20 backdrop-blur-[2px] lg:hidden"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.15 }}
+              onClick={() => setMobileDrawerOpen(false)}
+            />
             <motion.aside
-              className="fixed inset-y-0 left-0 z-50 w-60 border-r border-[#DDE5EE] bg-white shadow-xl lg:hidden"
-              initial={{ x: -240 }} animate={{ x: 0 }} exit={{ x: -240 }} transition={{ duration: 0.22, ease: "easeOut" }}>
-              <Sidebar {...sidebarProps} collapsed={false} />
+              className="fixed inset-y-0 left-0 z-50 w-[260px] border-r border-[#E2E8F0] bg-white shadow-xl lg:hidden"
+              initial={{ x: -260 }}
+              animate={{ x: 0 }}
+              exit={{ x: -260 }}
+              transition={{ duration: 0.22, ease: "easeOut" }}
+            >
+              <DesktopSidebar collapsed={false} user={user} onSignOut={handleSignOut} />
             </motion.aside>
           </>
         )}
       </AnimatePresence>
 
-      {/* Main content */}
+      {/* ── Main content ─────────────────────────────────────── */}
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* Mobile topbar */}
-        <header className="flex h-14 shrink-0 items-center border-b border-[#DDE5EE] bg-white px-4 lg:hidden">
-          <button onClick={() => setMobileOpen(true)} className="mr-3 rounded-xl p-2 text-[#8BA3B8] hover:bg-[#F0F4F8]">
-            {mobileOpen ? <X size={18} /> : <Menu size={18} />}
-          </button>
-          <Link href="/" className="flex items-center gap-2">
-            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-sky-500">
-              <span className="text-xs font-extrabold text-white">X</span>
-            </div>
-            <span className="text-sm font-extrabold tracking-tight text-[#0D1B2A]">auto<span className="text-sky-500">X</span></span>
-          </Link>
+        {/* Mobile top bar */}
+        <header className="flex h-14 shrink-0 items-center justify-between border-b border-[#E2E8F0] bg-white px-4 lg:hidden">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setMobileDrawerOpen(true)}
+              className="rounded-lg p-1.5 text-[#8BA3B8] hover:bg-[#F0F4F8] hover:text-[#0D1B2A]"
+            >
+              <Menu size={20} />
+            </button>
+            <Link href="/" className="flex items-center gap-2">
+              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-sky-400 to-sky-600">
+                <span className="text-xs font-extrabold text-white">X</span>
+              </div>
+              <span className="text-sm font-extrabold tracking-tight text-[#0D1B2A]">
+                auto<span className="text-sky-500">X</span>
+              </span>
+            </Link>
+          </div>
+          <div className="flex items-center gap-2">
+            <button className="rounded-lg p-1.5 text-[#8BA3B8] hover:bg-[#F0F4F8]">
+              <Search size={18} />
+            </button>
+            <button className="rounded-lg p-1.5 text-[#8BA3B8] hover:bg-[#F0F4F8]">
+              <Bell size={18} />
+            </button>
+          </div>
         </header>
 
-        <main className="flex-1 overflow-auto">{children}</main>
+        {/* Page content — extra bottom padding on mobile for bottom nav */}
+        <main className="flex-1 overflow-auto pb-20 lg:pb-0">{children}</main>
       </div>
+
+      {/* ── Mobile bottom nav ────────────────────────────────── */}
+      <MobileBottomNav />
     </div>
   );
 }

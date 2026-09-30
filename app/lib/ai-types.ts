@@ -3,6 +3,20 @@
  * Used by both API route handlers and client components.
  */
 
+// ── AI Quota Tracking ─────────────────────────────────────────────────────────
+
+export interface AIQuota {
+  limit: number;
+  used: number;
+  remaining: number;
+  percent: number;
+  resetsAt: string; // ISO string
+  resetHours: number;
+  model: string;
+  status: "healthy" | "low" | "exhausted" | "offline_mode";
+  isFallback: boolean;
+}
+
 // ── Smart Expense Classification ──────────────────────────────────────────────
 
 export interface ClassifiedExpense {
@@ -13,6 +27,8 @@ export interface ClassifiedExpense {
 
 export interface ClassifyExpensesResponse {
   expenses: ClassifiedExpense[];
+  quota?: AIQuota;
+  notice?: string;
 }
 
 // ── AI Money Coach ────────────────────────────────────────────────────────────
@@ -37,10 +53,13 @@ export interface CoachRequest {
   message: string;
   history: { role: ChatRole; content: string }[];
   context: CoachContext;
+  stream?: boolean;
 }
 
 export interface CoachResponse {
   reply: string;
+  quota?: AIQuota;
+  notice?: string;
 }
 
 // ── Natural Language What-If ──────────────────────────────────────────────────
@@ -64,6 +83,8 @@ export interface WhatIfProjection {
 export interface WhatIfResponse {
   parsed: WhatIfParsed;
   projections: WhatIfProjection[];
+  quota?: AIQuota;
+  notice?: string;
 }
 
 // ── Weekly AI Digest ──────────────────────────────────────────────────────────
@@ -77,4 +98,7 @@ export interface WeeklyDigest {
   savingsProgress: string;
   insights: string[]; // exactly 3 concise insights
   generatedAt: string; // ISO timestamp
+  quota?: AIQuota;
+  notice?: string;
 }
+
