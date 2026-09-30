@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Inter, Geist } from "next/font/google";
 import "./globals.css";
+import { cn } from "@/lib/utils";
+
+const geist = Geist({subsets:['latin'],variable:'--font-sans'});
 
 const inter = Inter({
   subsets: ["latin"],
@@ -10,12 +13,12 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: "autoX — Stop Buying, Start Growing",
   description:
-    "autoX shows you the real cost of buying vs investing. See how ₹5,000 today could grow into wealth tomorrow. Make smarter financial decisions.",
+    "autoX shows the real cost of every purchase and what it could become if invested instead. Make smarter financial decisions with AI-powered insights.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={inter.className}>
+    <html lang="en" className={cn(inter.className, "font-sans", geist.variable)}>
       <body>{children}</body>
     </html>
   );

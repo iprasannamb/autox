@@ -5,26 +5,30 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!;
 
 /**
- * Creates a Supabase client inside the proxy (edge) context.
- * Returns the mutated NextResponse so auth cookies are forwarded
- * to both the request (upstream) and the response (browser).
+ * Creates a Supabase client in the proxy (edge) context.
  *
- * Used by proxy.ts — do not call directly from application code.
+ * Returns:
+ *  - `supabase`    — the client instance (use for supabase.auth.getUser())
+ *  - `getResponse` — call this at the end of the proxy function to obtain a
+ *                    NextResponse that carries any mutated auth cookies.
+ *
+ * Used exclusively from proxy.ts (Next.js 16 replacement for middleware.ts).
  */
-export const createClient = (request: NextRequest) => {
+export function createSupabaseProxyClient(request: NextRequest) {
+  // Start with a pass-through response; may be rebuilt if cookies are set.
   let supabaseResponse = NextResponse.next({ request });
 
-  createServerClient(supabaseUrl, supabaseKey, {
+  const supabase = createServerClient(supabaseUrl, supabaseKey, {
     cookies: {
       getAll() {
         return request.cookies.getAll();
       },
       setAll(cookiesToSet) {
-        // Forward new cookies onto the request so upstream code sees them
+        // Mirror new cookies onto the request so upstream code sees them.
         cookiesToSet.forEach(({ name, value }) =>
           request.cookies.set(name, value)
         );
-        // Rebuild the response so it carries the updated cookie headers
+        // Rebuild the response so the browser also receives the cookies.
         supabaseResponse = NextResponse.next({ request });
         cookiesToSet.forEach(({ name, value, options }) =>
           supabaseResponse.cookies.set(name, value, options)
@@ -33,5 +37,5 @@ export const createClient = (request: NextRequest) => {
     },
   });
 
-  return supabaseResponse;
-};
+  return { supabase, getResponse: () => supabaseResponse };
+}

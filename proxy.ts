@@ -1,30 +1,47 @@
-import { type NextRequest } from "next/server";
-import { createClient } from "@/utils/supabase/proxy";
+import { NextResponse, type NextRequest } from "next/server";
+import { createSupabaseProxyClient } from "@/utils/supabase/proxy";
 
-/**
- * Next.js 16 proxy (formerly middleware).
- *
- * Runs before every matched request to keep the Supabase session fresh.
- * The createClient helper reads the incoming auth cookies, silently calls
- * supabase.auth.getUser() to refresh the token if needed, and writes the
- * updated cookies back onto both the forwarded request and the response.
- *
- * IMPORTANT: Do not rely solely on this proxy for auth enforcement.
- * Always verify the session inside Server Components, Server Actions, or
- * Route Handlers as recommended in the Supabase + Next.js docs.
- */
+/** Routes that require an authenticated user. */
+const PROTECTED = ["/dashboard", "/calculator"];
+
+/** Auth pages — authenticated users are redirected away from these. */
+const AUTH_PAGES = ["/signin", "/signup", "/auth"];
+
 export async function proxy(request: NextRequest) {
-  return createClient(request);
+  const { supabase, getResponse } = createSupabaseProxyClient(request);
+  const { data: { user } } = await supabase.auth.getUser();
+  const { pathname } = request.nextUrl;
+  const isDemoParam = request.nextUrl.searchParams.get("demo") === "true";
+  const isDemo = isDemoParam || request.cookies.get("autox_demo")?.value === "true";
+
+  // Unauthenticated and not demo → redirect protected routes to /signin
+  if (!user && !isDemo && PROTECTED.some((p) => pathname.startsWith(p))) {
+    return NextResponse.redirect(new URL("/signin", request.url));
+  }
+
+  // Set demo cookie if ?demo=true was provided
+  const res = getResponse();
+  if (isDemoParam) {
+    res.cookies.set("autox_demo", "true", { path: "/", maxAge: 86400 });
+  }
+
+  // Authenticated → redirect away from auth pages
+  if (user && AUTH_PAGES.some((p) => pathname === p || pathname.startsWith(p + "/"))) {
+    // Keep /auth/callback working
+    if (pathname.startsWith("/auth/callback")) return res;
+    return NextResponse.redirect(new URL("/dashboard", request.url));
+  }
+
+  // Authenticated on landing → redirect to dashboard
+  if (user && pathname === "/") {
+    return NextResponse.redirect(new URL("/dashboard", request.url));
+  }
+
+  return getResponse();
 }
 
 export const config = {
   matcher: [
-    /*
-     * Run on all paths EXCEPT:
-     *  - _next/static  (built assets)
-     *  - _next/image   (image optimisation)
-     *  - favicon.ico, sitemap.xml, robots.txt (metadata)
-     */
     "/((?!_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt).*)",
   ],
 };
