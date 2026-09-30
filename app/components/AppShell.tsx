@@ -7,6 +7,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   LayoutDashboard, Receipt, Wallet, Calculator, Sparkles,
   LogOut, ChevronLeft, ChevronRight, Menu, X, Bell, Search,
+  TrendingUp,
 } from "lucide-react";
 
 // ── Navigation items ──────────────────────────────────────────────────────────
@@ -19,11 +20,12 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { label: "Dashboard",  href: "/dashboard",  icon: LayoutDashboard },
-  { label: "Expenses",   href: "/expenses",   icon: Receipt },
-  { label: "Budget",     href: "/budget",      icon: Wallet },
-  { label: "Calculator", href: "/calculator",  icon: Calculator },
-  { label: "AI Insights", href: "/ai",         icon: Sparkles, badge: "AI" },
+  { label: "Dashboard",   href: "/dashboard",   icon: LayoutDashboard },
+  { label: "Expenses",    href: "/expenses",    icon: Receipt },
+  { label: "Budget",      href: "/budget",       icon: Wallet },
+  { label: "Calculator",  href: "/calculator",   icon: Calculator },
+  { label: "Investments", href: "/investments",  icon: TrendingUp },
+  { label: "AI Insights", href: "/ai",          icon: Sparkles, badge: "AI" },
 ];
 
 // ── Desktop sidebar ───────────────────────────────────────────────────────────

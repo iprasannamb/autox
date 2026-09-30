@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   AreaChart, Area, Line,
@@ -11,7 +11,7 @@ import {
   TrendingUp, TrendingDown, HelpCircle, RotateCcw,
   Sparkles, CheckCircle2, AlertTriangle, ArrowRight,
   Download, ChevronDown, ChevronUp, ShieldCheck, Target,
-  Calendar, Layers, Percent, DollarSign,
+  Calendar, Layers, Percent, DollarSign, Compass,
 } from "lucide-react";
 import {
   formatINR, formatINRCompact,
@@ -20,6 +20,7 @@ import {
   type FutureValuePlanResult,
   type YearProjection,
 } from "@/app/lib/finance";
+import { buildGoalFromCalculator, persistGoal } from "@/app/lib/investments";
 import AppShell, { PageSkeleton } from "@/app/components/AppShell";
 import { useAppData } from "@/app/lib/hooks";
 
@@ -162,18 +163,21 @@ function CustomChartTooltip({
 // ── Main Future Value Calculator Client ────────────────────────────────────────
 
 export default function CalculatorClient() {
+  const router = useRouter();
   const { user, loading, signOut } = useAppData();
   const searchParams = useSearchParams();
 
   // Inputs State
   const initialMonthly = parseInt(searchParams.get("monthly") || "") || DEFAULT_INPUTS.monthlyInvestment;
   const initialDuration = parseInt(searchParams.get("years") || "") || 10;
+  const initialReturn = parseFloat(searchParams.get("return") || "") || DEFAULT_INPUTS.expectedReturnPercent;
+  const initialStepUp = parseFloat(searchParams.get("stepUp") || "") || DEFAULT_INPUTS.annualStepUpPercent;
 
   const [monthlyInvestment, setMonthlyInvestment] = useState(initialMonthly);
-  const [annualStepUpPercent, setAnnualStepUpPercent] = useState(DEFAULT_INPUTS.annualStepUpPercent);
+  const [annualStepUpPercent, setAnnualStepUpPercent] = useState(initialStepUp);
   const [startYear, setStartYear] = useState(CURRENT_YEAR);
   const [targetYear, setTargetYear] = useState(CURRENT_YEAR + initialDuration);
-  const [expectedReturnPercent, setExpectedReturnPercent] = useState(DEFAULT_INPUTS.expectedReturnPercent);
+  const [expectedReturnPercent, setExpectedReturnPercent] = useState(initialReturn);
   const [inflationRatePercent, setInflationRatePercent] = useState(DEFAULT_INPUTS.inflationRatePercent);
   
   // Custom Target Real Goal
@@ -182,12 +186,16 @@ export default function CalculatorClient() {
   // Table expansion state
   const [showTable, setShowTable] = useState(false);
 
-  // Synchronize URL parameters if provided
+  // Synchronize URL parameters if provided (Two-way navigation: Investments -> Calculator)
   useEffect(() => {
     const urlMonthly = parseInt(searchParams.get("monthly") || "");
     const urlYears = parseInt(searchParams.get("years") || "");
+    const urlReturn = parseFloat(searchParams.get("return") || "");
+    const urlStepUp = parseFloat(searchParams.get("stepUp") || "");
     if (urlMonthly && urlMonthly > 0) setMonthlyInvestment(urlMonthly);
     if (urlYears && urlYears > 0) setTargetYear(startYear + urlYears);
+    if (urlReturn && urlReturn > 0) setExpectedReturnPercent(urlReturn);
+    if (!isNaN(urlStepUp) && urlStepUp >= 0) setAnnualStepUpPercent(urlStepUp);
   }, [searchParams, startYear]);
 
   // Derived calculation engine result
@@ -212,6 +220,52 @@ export default function CalculatorClient() {
   ]);
 
   const tenureYears = Math.max(1, targetYear - startYear);
+
+  // Sync active goal state so it's always ready for other pages
+  useEffect(() => {
+    const goal = buildGoalFromCalculator(
+      {
+        monthlyInvestment,
+        annualStepUpPercent,
+        startYear,
+        targetYear,
+        expectedReturnPercent,
+        inflationRatePercent,
+        targetRealCorpus: targetRealCorpus > 0 ? targetRealCorpus : undefined,
+      },
+      planResult,
+      "Wealth Creation"
+    );
+    persistGoal(goal);
+  }, [
+    monthlyInvestment,
+    annualStepUpPercent,
+    startYear,
+    targetYear,
+    expectedReturnPercent,
+    inflationRatePercent,
+    targetRealCorpus,
+    planResult,
+  ]);
+
+  // Two-way navigation: Calculator -> Investments ("Explore Investments for This Goal")
+  const handleExploreInvestments = () => {
+    const goal = buildGoalFromCalculator(
+      {
+        monthlyInvestment,
+        annualStepUpPercent,
+        startYear,
+        targetYear,
+        expectedReturnPercent,
+        inflationRatePercent,
+        targetRealCorpus: targetRealCorpus > 0 ? targetRealCorpus : undefined,
+      },
+      planResult,
+      "Wealth Creation"
+    );
+    persistGoal(goal);
+    router.push("/investments");
+  };
 
   // Reset to default settings
   function handleReset() {
@@ -285,7 +339,15 @@ export default function CalculatorClient() {
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={handleExploreInvestments}
+              className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-sky-500 to-sky-600 px-4 py-2 text-xs font-bold text-white shadow-xs hover:from-sky-600 hover:to-sky-700 transition"
+            >
+              <Compass size={14} />
+              <span>Explore Investments for This Goal →</span>
+            </button>
+
             <button
               onClick={handleReset}
               className="flex items-center gap-1.5 rounded-xl border border-[#E2E8F0] bg-white px-3.5 py-2 text-xs font-semibold text-[#475569] shadow-2xs hover:border-sky-300 hover:text-sky-600 transition"
@@ -295,6 +357,30 @@ export default function CalculatorClient() {
             </button>
           </div>
         </div>
+
+        {/* ── Investment Pre-fill Banner (Two-way navigation feedback) ── */}
+        {searchParams.get("investment") && (
+          <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-2xl border border-sky-200 bg-sky-50/80 p-4 text-xs text-sky-950 shadow-xs">
+            <div className="flex items-start gap-2.5">
+              <Sparkles size={17} className="text-sky-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-extrabold text-[#0D1B2A]">
+                  Pre-filled Parameters for: <span className="text-sky-700 underline decoration-sky-300">{searchParams.get("investment")}</span>
+                </p>
+                <p className="mt-0.5 text-sky-800">
+                  Target return pre-set to {expectedReturnPercent}% p.a. based on this product&apos;s indicative range. Adjust sliders below to run custom sensitivity tests.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={handleExploreInvestments}
+              className="shrink-0 flex items-center gap-1.5 rounded-xl bg-white border border-sky-300 px-3.5 py-1.5 text-xs font-bold text-sky-700 hover:bg-sky-100 transition shadow-2xs"
+            >
+              <span>Back to Investments</span>
+              <ArrowRight size={13} />
+            </button>
+          </div>
+        )}
 
         {/* ── Main Interactive Layout ────────────────────────────────────────── */}
         <div className="grid gap-6 lg:grid-cols-12 items-start">
@@ -565,6 +651,20 @@ export default function CalculatorClient() {
                   </strong>
                 </span>
               </div>
+
+              {/* Sub-row: Quick Navigation to Investments */}
+              <div className="mt-4 pt-3.5 border-t border-[#F1F5F9] flex flex-wrap items-center justify-between gap-3">
+                <div className="text-xs text-[#64748B]">
+                  Calculated Goal: <strong className="text-[#0D1B2A]">{formatINR(monthlyInvestment)}/mo</strong> to reach <strong className="text-sky-600">{formatINR(planResult.maturityAmount)}</strong> by {targetYear}
+                </div>
+                <button
+                  onClick={handleExploreInvestments}
+                  className="flex items-center gap-1.5 rounded-xl bg-sky-500 px-4 py-2 text-xs font-bold text-white shadow-xs hover:bg-sky-600 transition"
+                >
+                  <Compass size={14} />
+                  <span>Explore Investments for This Goal →</span>
+                </button>
+              </div>
             </div>
 
             {/* ── CARD B: 4-GRID LIVE RESULTS ─────────────────────────────────── */}
@@ -675,6 +775,30 @@ export default function CalculatorClient() {
                       </button>
                     </div>
                   )}
+
+                  {/* ── Explore Investments for This Goal Banner ── */}
+                  <div className="mt-4 rounded-2xl border border-sky-300 bg-gradient-to-r from-sky-500 to-sky-600 p-4 text-white shadow-md">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-sky-100">
+                          <Compass size={14} /> Ready to Execute This Plan?
+                        </div>
+                        <p className="mt-0.5 text-sm font-black">
+                          Explore SEBI / RBI Investments for This {formatINR(planResult.maturityAmount)} Goal
+                        </p>
+                        <p className="text-[11px] text-sky-100/90 leading-snug">
+                          Dynamically match mutual funds, bonds, stocks, gold, and crypto from your database against your {tenureYears}-year timeline.
+                        </p>
+                      </div>
+                      <button
+                        onClick={handleExploreInvestments}
+                        className="shrink-0 flex items-center gap-1.5 rounded-xl bg-white px-4 py-2.5 text-xs font-extrabold text-sky-700 shadow-sm hover:bg-sky-50 transition"
+                      >
+                        <span>Explore Investments for This Goal</span>
+                        <ArrowRight size={14} />
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>

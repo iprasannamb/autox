@@ -12,9 +12,16 @@ import {
   TrendingUp, TrendingDown, Plus, Sparkles, ArrowRight,
   Receipt, Wallet, Calculator, RefreshCw, Pencil, Trash2,
   Maximize2, RefreshCcw, Calendar, CheckCircle2, Clock,
+  Compass, Database, ShieldCheck,
 } from "lucide-react";
 import { useAppData } from "@/app/lib/hooks";
 import { formatINR, formatINRCompact, futureValue } from "@/app/lib/finance";
+import {
+  useActiveGoal,
+  fetchInvestmentsFromSupabase,
+  type InvestmentProduct,
+} from "@/app/lib/investments";
+import { matchInvestmentToGoal } from "@/app/lib/investment-matching";
 import {
   CATEGORY_CONFIG, fmtDate, getExpenseFV, getMonthlyRecurringAmount,
   getDateContextLabel, DEFAULT_MONTHLY_BUDGET, todayISO, type NewExpense,
@@ -113,6 +120,29 @@ export default function DashboardClient() {
   // Category detail modal & period state
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [categoryPeriod, setCategoryPeriod] = useState<CategoryPeriod>("monthly");
+
+  // Active Financial Goal & Supabase Investments Integration
+  const { goal } = useActiveGoal();
+  const [dbInvestments, setDbInvestments] = useState<InvestmentProduct[]>([]);
+
+  useEffect(() => {
+    fetchInvestmentsFromSupabase().then((res) => {
+      setDbInvestments(res.data);
+    });
+  }, []);
+
+  const tenureYears = Math.max(1, goal.targetMaturityYear - goal.startYear);
+
+  const matchedInvestments = useMemo(() => {
+    if (dbInvestments.length === 0) return [];
+    return dbInvestments
+      .map((inv) => ({
+        investment: inv,
+        match: matchInvestmentToGoal(inv, goal),
+      }))
+      .sort((a, b) => b.match.score - a.match.score)
+      .slice(0, 3);
+  }, [dbInvestments, goal]);
 
   // Check query parameter for instant action
   useEffect(() => {
@@ -319,6 +349,177 @@ export default function DashboardClient() {
             icon={Calculator}
             sub={`= ${formatINRCompact(futureValue(monthlyRecurring * 12, 0.12, 10))} in 10yr wealth`}
           />
+        </div>
+
+        {/* ── Compact Investment & Financial Goal Summary ───── */}
+        <div className="mb-6 rounded-3xl border border-sky-200 bg-gradient-to-br from-white via-sky-50/30 to-white p-5 shadow-xs">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-sky-100 pb-3.5">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-sky-500 text-white shadow-xs">
+                <Compass size={18} />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-sm font-extrabold text-[#0D1B2A]">
+                    Active Financial Goal & Investment Outlook
+                  </h2>
+                  <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold text-sky-700">
+                    {goal.goalType || "Wealth Creation"}
+                  </span>
+                </div>
+                <p className="text-xs text-[#64748B]">
+                  Targeting {formatINRCompact(goal.targetMaturityAmount)} by {goal.targetMaturityYear} ({tenureYears}-year horizon)
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Link
+                href="/calculator"
+                className="rounded-xl border border-[#E2E8F0] bg-white px-3 py-1.5 text-xs font-semibold text-[#475569] hover:bg-[#F8FAFC] transition shadow-2xs"
+              >
+                Calculator
+              </Link>
+              <Link
+                href="/investments"
+                className="flex items-center gap-1 rounded-xl bg-sky-500 px-3.5 py-1.5 text-xs font-bold text-white hover:bg-sky-600 transition shadow-xs"
+              >
+                <span>Explore Investments</span>
+                <ArrowRight size={12} />
+              </Link>
+            </div>
+          </div>
+
+          {/* Metric Row */}
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="rounded-2xl border border-sky-100 bg-white p-3 shadow-2xs">
+              <p className="text-[10px] font-medium text-[#8BA3B8]">Target Maturity Amount</p>
+              <p className="mt-0.5 text-base font-black text-[#0D1B2A]">
+                {formatINR(goal.targetMaturityAmount)}
+              </p>
+              <p className="text-[10px] text-emerald-600 font-semibold">
+                {formatINR(goal.inflationAdjustedTarget)} real power
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-sky-100 bg-white p-3 shadow-2xs">
+              <p className="text-[10px] font-medium text-[#8BA3B8]">Monthly Investment</p>
+              <p className="mt-0.5 text-base font-black text-[#0D1B2A]">
+                {formatINR(goal.monthlyInvestment)}/mo
+              </p>
+              <p className="text-[10px] text-[#8BA3B8]">+{goal.annualStepUpPercent}% annual step-up</p>
+            </div>
+
+            <div className="rounded-2xl border border-sky-100 bg-white p-3 shadow-2xs">
+              <p className="text-[10px] font-medium text-[#8BA3B8]">Target Year & Tenure</p>
+              <p className="mt-0.5 text-base font-black text-[#0D1B2A]">
+                {goal.targetMaturityYear}
+              </p>
+              <p className="text-[10px] text-sky-600 font-semibold">{tenureYears} years timeline</p>
+            </div>
+
+            <div className="rounded-2xl border border-sky-100 bg-white p-3 shadow-2xs">
+              <p className="text-[10px] font-medium text-[#8BA3B8]">Inflation Benchmark</p>
+              <p
+                className={`mt-0.5 text-base font-black ${
+                  goal.beatsInflation ? "text-emerald-600" : "text-amber-600"
+                }`}
+              >
+                {goal.beatsInflation
+                  ? `+${(goal.expectedGrowthPercent - goal.inflationPercent).toFixed(1)}% Real`
+                  : `Lagging`}
+              </p>
+              <p className="text-[10px] text-[#8BA3B8]">
+                {goal.expectedGrowthPercent}% vs {goal.inflationPercent}% inf
+              </p>
+            </div>
+          </div>
+
+          {/* Timeline Progress */}
+          <div className="mt-4 rounded-2xl bg-white p-3 border border-sky-100 shadow-2xs">
+            <div className="flex items-center justify-between text-[11px] mb-1.5">
+              <span className="font-semibold text-[#0D1B2A]">
+                Horizon Progression ({goal.startYear} → {goal.targetMaturityYear})
+              </span>
+              <span className="font-bold text-sky-600">
+                {Math.min(100, Math.max(5, Math.round(((new Date().getFullYear() - goal.startYear + 1) / Math.max(1, tenureYears)) * 100)))}% Timeline
+              </span>
+            </div>
+            <div className="h-2 w-full overflow-hidden rounded-full bg-[#F1F5F9]">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-sky-400 to-sky-500"
+                style={{
+                  width: `${Math.min(100, Math.max(8, Math.round(((new Date().getFullYear() - goal.startYear + 1) / Math.max(1, tenureYears)) * 100)))}%`,
+                }}
+              />
+            </div>
+          </div>
+
+          {/* Relevant Investment Options Preview */}
+          <div className="mt-4 pt-3 border-t border-sky-100">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-sky-800">
+                Matched Database Investments
+              </span>
+              <Link
+                href="/investments"
+                className="text-[11px] font-semibold text-sky-600 hover:text-sky-700 inline-flex items-center gap-0.5"
+              >
+                View all in catalog <ArrowRight size={10} />
+              </Link>
+            </div>
+
+            {matchedInvestments.length === 0 ? (
+              <div className="flex items-center justify-between rounded-xl bg-white p-3 text-xs text-[#64748B] border border-dashed border-[#CBD5E1]">
+                <div className="flex items-center gap-2">
+                  <Database size={14} className="text-amber-500" />
+                  <span>No products found in Supabase yet. Upload records to see automated match scoring.</span>
+                </div>
+                <Link
+                  href="/investments"
+                  className="font-bold text-sky-600 hover:underline"
+                >
+                  Manage Investments →
+                </Link>
+              </div>
+            ) : (
+              <div className="grid gap-2 sm:grid-cols-3">
+                {matchedInvestments.map(({ investment, match }) => (
+                  <div
+                    key={investment.id}
+                    className="flex flex-col justify-between rounded-xl border border-sky-100 bg-white p-2.5 shadow-2xs hover:border-sky-300 transition"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="truncate text-[10px] font-bold text-sky-700 uppercase">
+                          {investment.type}
+                        </span>
+                        <span className="rounded-full bg-sky-50 px-1.5 py-0.2 text-[9px] font-extrabold text-sky-700 shrink-0">
+                          {match.score}% Fit
+                        </span>
+                      </div>
+                      <p className="mt-1 font-bold text-xs text-[#0D1B2A] truncate">
+                        {investment.name}
+                      </p>
+                      <p className="text-[10px] text-[#64748B] truncate">
+                        {investment.provider} · <strong className="text-sky-600">{investment.indicative_return_range}</strong>
+                      </p>
+                    </div>
+
+                    <div className="mt-2 pt-1.5 border-t border-[#F1F5F9] flex items-center justify-between text-[10px]">
+                      <span className="text-[#8BA3B8]">Min: {formatINR(investment.minimum_investment)}</span>
+                      <Link
+                        href={`/calculator?monthly=${Math.max(goal.monthlyInvestment, investment.minimum_investment)}&years=${tenureYears}&return=${Math.round(match.metrics.estimatedReturnMidpoint)}&investment=${encodeURIComponent(investment.name)}`}
+                        className="font-bold text-sky-600 hover:text-sky-700"
+                      >
+                        Model →
+                      </Link>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* ── Charts row ─────────────────────────────────────── */}

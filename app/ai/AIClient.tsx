@@ -1138,15 +1138,18 @@ export default function AIClient() {
                   </div>
                 </div>
 
-                <button
-                  id="btn-generate-digest-main"
-                  onClick={handleGenerateDigest}
-                  disabled={isDigestLoading || expenses.length === 0}
-                  className="flex items-center justify-center gap-1.5 rounded-xl bg-sky-500 px-5 py-2.5 text-xs sm:text-sm font-bold text-white shadow-sm hover:bg-sky-600 transition disabled:opacity-40"
-                >
-                  <RotateCcw size={14} className={isDigestLoading ? "animate-spin" : ""} />
-                  {isDigestLoading ? "Generating Digest…" : digest ? "Refresh Digest" : "Generate Digest"}
-                </button>
+                <div className="flex items-center gap-3">
+                  <AIQuotaBadge quota={quota} compact />
+                  <button
+                    id="btn-generate-digest-main"
+                    onClick={handleGenerateDigest}
+                    disabled={isDigestLoading || expenses.length === 0}
+                    className="flex items-center justify-center gap-1.5 rounded-xl bg-sky-500 px-5 py-2.5 text-xs sm:text-sm font-bold text-white shadow-sm hover:bg-sky-600 transition disabled:opacity-40"
+                  >
+                    <RotateCcw size={14} className={isDigestLoading ? "animate-spin" : ""} />
+                    {isDigestLoading ? "Generating Digest…" : digest ? "Refresh Digest" : "Generate Digest"}
+                  </button>
+                </div>
               </div>
 
               {digestError && (
