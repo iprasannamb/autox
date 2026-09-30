@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { createClient } from "@/utils/supabase/client";
+import { getURL } from "@/utils/supabase/url";
 
 export default function SignUpClient() {
   const supabase = createClient();
@@ -18,7 +19,13 @@ export default function SignUpClient() {
     e.preventDefault();
     setError(null);
     setLoading(true);
-    const { error } = await supabase.auth.signUp({ email, password });
+    const { error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        emailRedirectTo: getURL("/auth/callback"),
+      },
+    });
     if (error) { setError(error.message); setLoading(false); return; }
     setSuccess(true);
     setLoading(false);

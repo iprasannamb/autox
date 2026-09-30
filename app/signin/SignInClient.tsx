@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { createClient } from "@/utils/supabase/client";
+import { getURL } from "@/utils/supabase/url";
+
 
 function GoogleIcon() {
   return (
@@ -37,7 +39,7 @@ export default function SignInClient() {
     setError(null);
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: { redirectTo: `${window.location.origin}/auth/callback` },
+      options: { redirectTo: getURL("/auth/callback") },
     });
     if (error) {
       setError(error.message.toLowerCase().includes("provider") || error.message.toLowerCase().includes("not enabled")

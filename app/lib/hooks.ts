@@ -258,6 +258,9 @@ export function useAppData(): AppData {
   }, [user, isDemo, supabase]);
 
   const signOut = useCallback(async () => {
+    if (typeof document !== "undefined") {
+      document.cookie = "autox_demo=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+    }
     await supabase.auth.signOut();
     router.push("/signin");
   }, [supabase, router]);

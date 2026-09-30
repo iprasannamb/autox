@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
+import { getURL } from "@/utils/supabase/url";
+
 
 // ── Google G logo SVG (official brand colours) ────────────────────────────────
 function GoogleIcon() {
@@ -73,7 +75,7 @@ export default function AuthClient() {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
+        redirectTo: getURL("/auth/callback"),
       },
     });
     if (error) {
@@ -108,7 +110,13 @@ export default function AuthClient() {
       router.push("/dashboard");
       router.refresh();
     } else {
-      const { error } = await supabase.auth.signUp({ email, password });
+      const { error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          emailRedirectTo: getURL("/auth/callback"),
+        },
+      });
       if (error) {
         setError(error.message);
         setLoading(false);

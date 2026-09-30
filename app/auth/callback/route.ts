@@ -1,4 +1,5 @@
 import { createClient } from "@/utils/supabase/server";
+import { getRequestOrigin } from "@/utils/supabase/url";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
@@ -10,11 +11,15 @@ import { NextResponse } from "next/server";
  * their destination (defaults to /dashboard).
  */
 export async function GET(request: Request) {
-  const { searchParams, origin } = new URL(request.url);
+  const { searchParams } = new URL(request.url);
 
   const code = searchParams.get("code");
   // `next` lets Supabase flows carry a custom redirect path
   const next = searchParams.get("next") ?? "/dashboard";
+
+  // Resolve production vs local origin from headers and environment
+  const origin = getRequestOrigin(request);
+  const targetUrl = next.startsWith("/") ? `${origin}${next}` : `${origin}/${next}`;
 
   if (code) {
     const cookieStore = await cookies();
@@ -23,11 +28,12 @@ export async function GET(request: Request) {
     const { error } = await supabase.auth.exchangeCodeForSession(code);
 
     if (!error) {
-      // Session is now live — send the user to the dashboard (or wherever)
-      return NextResponse.redirect(`${origin}${next}`);
+      // Session is now live — send the user to the destination on the proper host
+      return NextResponse.redirect(targetUrl);
     }
   }
 
   // Something went wrong — redirect back to auth with an error hint
   return NextResponse.redirect(`${origin}/signin?error=oauth_failed`);
 }
+
