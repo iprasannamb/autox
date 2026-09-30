@@ -4,13 +4,16 @@
  * Evaluates investment products against the user's active financial goal.
  * Explains WHY an option fits or diverges rather than merely ranking by return.
  *
- * All returns and projections are illustrative mathematical calculations
- * and NEVER presented as guaranteed returns.
+ * Strict Compliance:
+ * - Uses exact phrasing: "Database-listed indicative return range: X–Y%"
+ * - Never claims an investment will definitely achieve the goal.
+ * - Never guarantees returns.
  */
 
 import {
   type InvestmentProduct,
   type UserFinancialGoal,
+  formatIndicativeReturn,
 } from "./investments";
 import { formatINR, calculateFutureValuePlan } from "./finance";
 
@@ -19,6 +22,7 @@ import { formatINR, calculateFutureValuePlan } from "./finance";
 export interface GoalMatchResult {
   score: number; // 0 - 100
   matchQuality: "High Match" | "Moderate Match" | "Diversifier" | "Selective Fit";
+  headline: string; // e.g. "6-year horizon · Moderate risk · ₹500 minimum investment"
   reasons: string[];
   caveats: string[];
   fundingGap: {
@@ -31,34 +35,12 @@ export interface GoalMatchResult {
   };
   metrics: {
     estimatedReturnMidpoint: number;
-    horizonYears: number;
+    horizonMinYears: number;
+    horizonMaxYears: number;
     goalTenureYears: number;
     isAffordable: boolean;
     beatsInflationSpread: number;
   };
-}
-
-// ── Helpers to parse returns and horizons ────────────────────────────────────
-
-export function parseReturnRange(rangeStr: string): { min: number; max: number; avg: number } {
-  // Matches numbers like "12% - 15%" or "7.1% p.a." or "8.5"
-  const matches = rangeStr.match(/(\d+(?:\.\d+)?)/g);
-  if (!matches || matches.length === 0) {
-    return { min: 8, max: 12, avg: 10 };
-  }
-  const nums = matches.map(Number);
-  if (nums.length === 1) {
-    return { min: nums[0], max: nums[0], avg: nums[0] };
-  }
-  const min = Math.min(...nums);
-  const max = Math.max(...nums);
-  return { min, max, avg: (min + max) / 2 };
-}
-
-export function parseHorizonYears(horizonStr: string): number {
-  const matches = horizonStr.match(/(\d+)/g);
-  if (!matches || matches.length === 0) return 3;
-  return Math.min(...matches.map(Number));
 }
 
 // ── Core Goal-Based Match Function ───────────────────────────────────────────
@@ -68,38 +50,46 @@ export function matchInvestmentToGoal(
   goal: UserFinancialGoal
 ): GoalMatchResult {
   const goalTenure = Math.max(1, goal.targetMaturityYear - goal.startYear);
-  const { min: retMin, max: retMax, avg: retAvg } = parseReturnRange(investment.indicative_return_range);
-  const minHorizon = parseHorizonYears(investment.horizon);
+  const retMin = investment.expected_return_min;
+  const retMax = investment.expected_return_max;
+  const retAvg = (retMin + retMax) / 2;
+  const hMin = investment.horizon_min_years;
+  const hMax = investment.horizon_max_years;
 
-  let score = 50; // base baseline
+  let score = 50;
   const reasons: string[] = [];
   const caveats: string[] = [];
 
   // 1. Horizon Alignment
-  const horizonDelta = goalTenure - minHorizon;
-  if (horizonDelta >= 0) {
-    score += 18;
+  // Target tenure fits if it falls within [hMin, hMax] or is >= hMin
+  if (goalTenure >= hMin && goalTenure <= hMax + 3) {
+    score += 20;
     reasons.push(
-      `Horizon Synergy: Recommended holding period (${investment.horizon}) comfortably fits your ${goalTenure}-year roadmap to ${goal.targetMaturityYear}.`
+      `Horizon Alignment: Your ${goalTenure}-year goal timeline to ${goal.targetMaturityYear} aligns with the recommended ${investment.horizon} investment horizon.`
     );
-  } else {
+  } else if (goalTenure < hMin) {
     score -= 12;
     caveats.push(
-      `Timeframe Sensitivity: Product suggests a ${investment.horizon} horizon, which exceeds your planned ${goalTenure}-year target window.`
+      `Horizon Caution: Recommended horizon is ${investment.horizon}. Your ${goalTenure}-year timeline is shorter, which may expose capital to market cycles before maturity.`
+    );
+  } else {
+    score += 10;
+    reasons.push(
+      `Extended Horizon: Your ${goalTenure}-year horizon comfortably exceeds the minimum ${hMin}-year holding requirement.`
     );
   }
 
   // 2. Minimum Investment Affordability
   const isAffordable = goal.monthlyInvestment >= investment.minimum_investment;
   if (isAffordable) {
-    score += 14;
+    score += 15;
     reasons.push(
-      `Accessible Entry: Minimum deposit of ${formatINR(investment.minimum_investment)} is fully covered by your monthly commitment of ${formatINR(goal.monthlyInvestment)}.`
+      `Deposit Accessibility: Minimum requirement of ${formatINR(investment.minimum_investment)} is fully covered by your planned monthly commitment of ${formatINR(goal.monthlyInvestment)}.`
     );
   } else {
     score -= 10;
     caveats.push(
-      `Capital Requirement: Requires minimum initial outlay of ${formatINR(investment.minimum_investment)} (your planned monthly SIP is ${formatINR(goal.monthlyInvestment)}). Lump-sum accumulation needed.`
+      `Initial Capital Gap: Requires a minimum initial investment of ${formatINR(investment.minimum_investment)} (vs your current ${formatINR(goal.monthlyInvestment)}/month). May require initial lump-sum accumulation.`
     );
   }
 
@@ -108,58 +98,58 @@ export function matchInvestmentToGoal(
   if (spread >= 3) {
     score += 15;
     reasons.push(
-      `Robust Inflation Hedge: Indicative yield (${investment.indicative_return_range}) offers a +${spread.toFixed(1)}% real spread above your ${goal.inflationPercent}% inflation estimate.`
+      `Inflation Protection Spread: ${formatIndicativeReturn(retMin, retMax)} provides an indicative +${spread.toFixed(1)}% real spread above your ${goal.inflationPercent}% inflation benchmark.`
     );
   } else if (spread > 0) {
     score += 8;
     reasons.push(
-      `Inflation Positive: Indicative returns slightly outpace your ${goal.inflationPercent}% inflation benchmark (+${spread.toFixed(1)}% real spread).`
+      `Real Spread: ${formatIndicativeReturn(retMin, retMax)} outpaces your ${goal.inflationPercent}% inflation benchmark by an indicative +${spread.toFixed(1)}%.`
     );
   } else {
     score -= 15;
     caveats.push(
-      `Purchasing Power Risk: Indicative return (${investment.indicative_return_range}) may fail to keep pace with your ${goal.inflationPercent}% inflation assumption.`
+      `Purchasing Power Risk: ${formatIndicativeReturn(retMin, retMax)} may not fully outpace your ${goal.inflationPercent}% inflation benchmark.`
     );
   }
 
   // 4. Target Amount Scale & Growth Capability
   if (retAvg >= goal.expectedGrowthPercent) {
-    score += 12;
+    score += 10;
     reasons.push(
-      `Growth Compatibility: Estimated return range aligns with your target growth rate of ${goal.expectedGrowthPercent}% p.a. toward ${formatINR(goal.targetMaturityAmount)}.`
+      `Growth Alignment: Indicative return range (${retMin}% – ${retMax}%) is compatible with your target growth rate of ${goal.expectedGrowthPercent}% p.a. toward ${formatINR(goal.targetMaturityAmount)}.`
     );
   } else {
     const lag = (goal.expectedGrowthPercent - retAvg).toFixed(1);
     score -= 8;
     caveats.push(
-      `Lower Expected Growth: Indicative return (${investment.indicative_return_range}) is ~${lag}% lower than your target calculation rate (${goal.expectedGrowthPercent}%).`
+      `Growth Differential: Indicative midpoint return (${retAvg}%) is ~${lag}% lower than your calculator expected growth rate (${goal.expectedGrowthPercent}%).`
     );
   }
 
   // 5. Risk & Regulatory Status Alignment
-  const productRisk = (investment.risk || "Moderate").toLowerCase();
+  const productRisk = (investment.risk_level || "Moderate").toLowerCase();
   const goalRisk = (goal.riskPreference || "Moderate").toLowerCase();
 
   if (productRisk.includes(goalRisk) || (goalRisk === "moderate" && (productRisk.includes("low") || productRisk.includes("moderate")))) {
     score += 10;
     reasons.push(
-      `Risk Harmony: ${investment.risk} risk profile aligns with your ${goal.riskPreference || "Moderate"} preference for ${goal.goalType || "wealth creation"}.`
+      `Risk Profile: ${investment.risk_level} risk level is suitable for your ${goal.riskPreference || "Moderate"} preference and ${goal.goalType || "wealth creation"} objective.`
     );
   } else {
     caveats.push(
-      `Risk Profile: Classified as ${investment.risk} risk — verify that this fits your comfort level.`
+      `Risk Notice: Classified as ${investment.risk_level} risk — verify whether this risk level fits your comfort tolerance.`
     );
   }
 
   // Institutional Compliance
   if (investment.regulatory_status) {
     reasons.push(
-      `Institutional Oversight: Complies under ${investment.regulatory_status} via ${investment.provider}.`
+      `Institutional Framework: Regulated under ${investment.regulatory_status} by ${investment.provider}.`
     );
   }
 
   // 6. Funding Gap Simulation (Reusing calculateFutureValuePlan)
-  // Run simulation using the conservative/lower-bound indicative return
+  // Run simulation using the conservative (lower-bound) indicative return
   const simPlan = calculateFutureValuePlan({
     monthlyInvestment: goal.monthlyInvestment,
     annualStepUpPercent: goal.annualStepUpPercent,
@@ -180,10 +170,14 @@ export function matchInvestmentToGoal(
   if (hasGap) {
     const scale = targetCorpus / Math.max(1, projectedCorpus);
     suggestedMonthly = Math.round(goal.monthlyInvestment * scale);
-    gapExplanation = `At the lower indicative rate of ${retMin}%, projected corpus reaches ~${formatINR(projectedCorpus)}, indicating a potential gap of ${formatINR(gapAmount)}. Stepping up monthly savings to ~${formatINR(suggestedMonthly)} closes this gap.`;
+    gapExplanation = `At the lower indicative rate of ${retMin}%, projected mathematical corpus reaches ~${formatINR(projectedCorpus)}, indicating a potential contribution gap of ${formatINR(gapAmount)}. Stepping up monthly investment to ~${formatINR(suggestedMonthly)} closes this potential gap.`;
   } else {
-    gapExplanation = `Compounding at ${retMin}% indicative rate is projected to yield ~${formatINR(projectedCorpus)}, fully meeting your ${formatINR(targetCorpus)} milestone.`;
+    gapExplanation = `Mathematical compounding at ${retMin}% indicative rate projects a maturity corpus of ~${formatINR(projectedCorpus)}, meeting your ${formatINR(targetCorpus)} milestone.`;
   }
+
+  // Formulate the headline matching the user's explicit example:
+  // e.g. "6-year horizon · Moderate risk · ₹500 minimum investment"
+  const headline = `${investment.horizon} horizon · ${investment.risk_level} risk · ${formatINR(investment.minimum_investment)} minimum investment`;
 
   // Clamp score
   const finalScore = Math.min(99, Math.max(35, Math.round(score)));
@@ -196,6 +190,7 @@ export function matchInvestmentToGoal(
   return {
     score: finalScore,
     matchQuality,
+    headline,
     reasons,
     caveats,
     fundingGap: {
@@ -208,7 +203,8 @@ export function matchInvestmentToGoal(
     },
     metrics: {
       estimatedReturnMidpoint: retAvg,
-      horizonYears: minHorizon,
+      horizonMinYears: hMin,
+      horizonMaxYears: hMax,
       goalTenureYears: goalTenure,
       isAffordable,
       beatsInflationSpread: spread,
@@ -219,12 +215,12 @@ export function matchInvestmentToGoal(
 // ── Filter and Ranking Utilities ─────────────────────────────────────────────
 
 export interface InvestmentFilters {
-  category: string;     // All or specific type
-  risk: string;         // All, Low, Moderate, High, Very High
-  horizon: string;      // All, < 3 Years, 3-5 Years, 5+ Years
-  minInvestment: string;// All, <= 1000, <= 5000, <= 10000
-  goalType: string;     // All or specific
-  searchQuery: string;  // text match
+  category: string;       // All or specific type
+  risk: string;           // All, Low, Moderate, High, Very High
+  horizon: string;        // All, < 3 Years, 3-5 Years, 5+ Years, 7+ Years
+  minInvestment: string;  // All, <= 500, <= 1000, <= 5000, <= 10000
+  goalType: string;       // All or specific
+  searchQuery: string;    // text search
   sortBy: "match" | "return" | "min_invest" | "risk";
 }
 
@@ -249,10 +245,10 @@ export function filterAndRankInvestments(
   }));
 
   const filtered = scored.filter(({ investment, match }) => {
-    // 1. Search Query
+    // 1. Search Query (name, provider, type, regulatory_status, isin, ticker_symbol, exchange)
     if (filters.searchQuery.trim()) {
       const q = filters.searchQuery.toLowerCase();
-      const matchText = `${investment.name} ${investment.provider} ${investment.type} ${investment.regulatory_status} ${investment.goal_type || ""}`.toLowerCase();
+      const matchText = `${investment.name} ${investment.provider} ${investment.type} ${investment.regulatory_status} ${investment.isin || ""} ${investment.ticker_symbol || ""} ${investment.exchange || ""} ${investment.description || ""}`.toLowerCase();
       if (!matchText.includes(q)) return false;
     }
 
@@ -263,18 +259,18 @@ export function filterAndRankInvestments(
       if (!invType.includes(cat) && !cat.includes(invType)) return false;
     }
 
-    // 3. Risk
+    // 3. Risk Level
     if (filters.risk !== "All") {
-      if (!investment.risk.toLowerCase().includes(filters.risk.toLowerCase())) return false;
+      if (!investment.risk_level.toLowerCase().includes(filters.risk.toLowerCase())) return false;
     }
 
     // 4. Horizon
     if (filters.horizon !== "All") {
-      const hYears = match.metrics.horizonYears;
-      if (filters.horizon === "< 3 Years" && hYears >= 3) return false;
-      if (filters.horizon === "3-5 Years" && (hYears < 3 || hYears > 5)) return false;
-      if (filters.horizon === "5+ Years" && hYears < 5) return false;
-      if (filters.horizon === "7+ Years" && hYears < 7) return false;
+      const hMin = match.metrics.horizonMinYears;
+      if (filters.horizon === "< 3 Years" && hMin >= 3) return false;
+      if (filters.horizon === "3-5 Years" && (hMin < 3 || hMin > 5)) return false;
+      if (filters.horizon === "5+ Years" && hMin < 5) return false;
+      if (filters.horizon === "7+ Years" && hMin < 7) return false;
     }
 
     // 5. Minimum Investment
@@ -285,7 +281,7 @@ export function filterAndRankInvestments(
 
     // 6. Goal Type
     if (filters.goalType !== "All") {
-      const g = (investment.goal_type || "").toLowerCase();
+      const g = String(investment.goal_types || "").toLowerCase();
       if (!g.includes(filters.goalType.toLowerCase())) return false;
     }
 
@@ -298,15 +294,15 @@ export function filterAndRankInvestments(
       return b.match.score - a.match.score;
     }
     if (filters.sortBy === "return") {
-      return b.match.metrics.estimatedReturnMidpoint - a.match.metrics.estimatedReturnMidpoint;
+      return b.investment.expected_return_max - a.investment.expected_return_max;
     }
     if (filters.sortBy === "min_invest") {
       return a.investment.minimum_investment - b.investment.minimum_investment;
     }
     if (filters.sortBy === "risk") {
       const rank: Record<string, number> = { low: 1, moderate: 2, high: 3, "very high": 4 };
-      const rA = rank[a.investment.risk.toLowerCase()] || 2;
-      const rB = rank[b.investment.risk.toLowerCase()] || 2;
+      const rA = rank[a.investment.risk_level.toLowerCase()] || 2;
+      const rB = rank[b.investment.risk_level.toLowerCase()] || 2;
       return rA - rB;
     }
     return 0;

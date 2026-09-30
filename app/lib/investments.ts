@@ -2,7 +2,7 @@
  * investments.ts — Investment Product types, Supabase fetcher, and Goal state management.
  *
  * NOTE: Per project rules, we NEVER create, modify, seed, or populate Supabase tables.
- * Data is fetched dynamically from the user's existing Supabase database.
+ * Data is fetched dynamically from the user's existing Supabase table: `investment_products`.
  */
 
 "use client";
@@ -24,24 +24,87 @@ export const INVESTMENT_CATEGORIES = [
 
 export type InvestmentCategory = (typeof INVESTMENT_CATEGORIES)[number];
 
-// ── Investment Product Interface ──────────────────────────────────────────────
+// ── Investment Product Interface matching Supabase `investment_products` ───────
 
 export interface InvestmentProduct {
   id: string;
   name: string;
   type: string;
   provider: string;
-  risk: "Low" | "Moderate" | "High" | "Very High" | string;
-  indicative_return_range: string;
+  description?: string | null;
+  risk_level: string;
+  expected_return_min: number;
+  expected_return_max: number;
   minimum_investment: number;
-  horizon: string;
+  horizon_min_years: number;
+  horizon_max_years: number;
+  lock_in_years?: number | null;
   liquidity: string;
+  goal_types?: string[] | string | null;
   regulatory_status: string;
-  source: string;
+  source_name: string;
+  source_url?: string | null;
   last_updated: string;
-  goal_type?: string;
-  description?: string;
+  isin?: string | null;
+  ticker_symbol?: string | null;
+  exchange?: string | null;
+  currency?: string | null;
+  data_as_of?: string | null;
+  product_status?: string | null;
+  is_active?: boolean | null;
+
+  // Convenience computed fields for UI rendering
+  indicative_return_range: string;
+  horizon: string;
+  risk: string;
+  source: string;
   raw?: Record<string, unknown>;
+}
+
+// ── Data Freshness Helpers ────────────────────────────────────────────────────
+
+export interface FreshnessInfo {
+  isStale: boolean;
+  daysAgo: number;
+  monthsAgo: number;
+  label: string;
+}
+
+export function checkDataFreshness(dateStr?: string | null): FreshnessInfo {
+  if (!dateStr) {
+    return { isStale: false, daysAgo: 0, monthsAgo: 0, label: "Date unavailable" };
+  }
+  const date = new Date(dateStr);
+  if (isNaN(date.getTime())) {
+    return { isStale: false, daysAgo: 0, monthsAgo: 0, label: dateStr };
+  }
+  const diffMs = Date.now() - date.getTime();
+  const daysAgo = Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
+  const monthsAgo = Math.floor(daysAgo / 30);
+  const isStale = daysAgo > 90; // Over 3 months is flagged as stale
+
+  let label = `${daysAgo}d ago`;
+  if (monthsAgo >= 1) {
+    label = `${monthsAgo} mo ago`;
+  }
+
+  return { isStale, daysAgo, monthsAgo, label };
+}
+
+// ── Formatting Safe Return & Horizon Strings ─────────────────────────────────
+
+export function formatIndicativeReturn(min: number, max: number): string {
+  if (min === max) {
+    return `Database-listed indicative return: ${min}% p.a.`;
+  }
+  return `Database-listed indicative return range: ${min}% – ${max}%`;
+}
+
+export function formatHorizonYears(minYears: number, maxYears: number): string {
+  if (minYears === maxYears) {
+    return `${minYears}+ Years`;
+  }
+  return `${minYears}–${maxYears} Years`;
 }
 
 // ── User Financial Goal (created by Calculator) ───────────────────────────────
@@ -49,17 +112,17 @@ export interface InvestmentProduct {
 export interface UserFinancialGoal {
   id: string;
   title: string;
-  monthlyInvestment: number;      // ₹ / month initial
-  annualStepUpPercent: number;    // % annual step-up
-  startYear: number;              // e.g. 2026
-  targetMaturityYear: number;     // e.g. 2036
-  expectedGrowthPercent: number;  // annual return %
-  inflationPercent: number;       // annual inflation %
-  targetMaturityAmount: number;   // Nominal final maturity corpus
-  inflationAdjustedTarget: number;// Real value in today's purchasing power
+  monthlyInvestment: number;          // ₹ / month initial
+  annualStepUpPercent: number;        // % annual step-up
+  startYear: number;                  // e.g. 2026
+  targetMaturityYear: number;         // e.g. 2036
+  expectedGrowthPercent: number;      // annual return %
+  inflationPercent: number;           // annual inflation %
+  targetMaturityAmount: number;       // Nominal final maturity corpus
+  inflationAdjustedTarget: number;    // Real value in today's purchasing power
   requiredMonthlyInvestment?: number; // Needed to meet target corpus
-  beatsInflation: boolean;        // Whether growth > inflation
-  goalType?: string;              // e.g. "Wealth Creation", "Retirement", etc.
+  beatsInflation: boolean;            // Whether growth > inflation
+  goalType?: string;                  // e.g. "Wealth Creation", "Retirement", etc.
   riskPreference?: "Conservative" | "Moderate" | "Aggressive";
   nominalBeatsByAmount?: number;
   realWealthGain?: number;
@@ -191,7 +254,6 @@ export function useActiveGoal() {
 
     window.addEventListener(GOAL_SYNC_EVENT, handleSync);
     
-    // Also read on mount in case it changed in another tab
     const existing = getStoredGoal();
     if (existing) {
       setGoal(existing);
@@ -213,58 +275,89 @@ export function useActiveGoal() {
 // ── Supabase Dynamic Investment Fetcher & Normalizer ──────────────────────────
 
 /**
- * Normalizes any Supabase record into a typed InvestmentProduct.
- * Supports flexible column naming conventions (camelCase, snake_case, aliases).
+ * Normalizes any record from `investment_products` into a typed InvestmentProduct.
  */
 export function normalizeInvestment(raw: Record<string, unknown>, index: number): InvestmentProduct {
-  const id = String(raw.id ?? raw._id ?? `inv-${index + 1}`);
-  const name = String(raw.name ?? raw.title ?? raw.product_name ?? raw.investment_name ?? `Investment Option #${index + 1}`);
-  const type = String(raw.type ?? raw.category ?? raw.investment_type ?? raw.asset_class ?? "SIP / Mutual Funds");
-  const provider = String(raw.provider ?? raw.issuer ?? raw.amc ?? raw.institution ?? raw.platform ?? "SEBI Regulated Provider");
-  const risk = String(raw.risk ?? raw.risk_level ?? raw.risk_rating ?? "Moderate");
+  const id = String(raw.id ?? `inv-${index + 1}`);
+  const name = String(raw.name ?? `Investment Option #${index + 1}`);
+  const type = String(raw.type ?? "SIP / Mutual Funds");
+  const provider = String(raw.provider ?? "Regulated Institution");
+  const description = raw.description ? String(raw.description) : null;
+  const risk_level = String(raw.risk_level ?? raw.risk ?? "Moderate");
 
-  const indicative_return_range = String(
-    raw.indicative_return_range ??
-    raw.indicative_returns ??
-    raw.return_range ??
-    raw.returns ??
-    raw.expected_return ??
-    raw.annual_return ??
-    "10% - 12%"
-  );
+  // Parse returns
+  let retMin = typeof raw.expected_return_min === "number" ? raw.expected_return_min : parseFloat(String(raw.expected_return_min || ""));
+  let retMax = typeof raw.expected_return_max === "number" ? raw.expected_return_max : parseFloat(String(raw.expected_return_max || ""));
+  if (isNaN(retMin)) retMin = 8.0;
+  if (isNaN(retMax)) retMax = retMin >= 10 ? retMin + 2 : 12.0;
 
-  const minVal = raw.minimum_investment ?? raw.min_investment ?? raw.min_amount ?? raw.minimum_amount ?? 500;
-  const minimum_investment = typeof minVal === "number" ? minVal : (parseInt(String(minVal).replace(/[^\d]/g, ""), 10) || 500);
+  // Parse minimum investment
+  let minInv = typeof raw.minimum_investment === "number" ? raw.minimum_investment : parseInt(String(raw.minimum_investment || "").replace(/[^\d]/g, ""), 10);
+  if (isNaN(minInv) || minInv < 0) minInv = 500;
 
-  const horizon = String(raw.horizon ?? raw.investment_horizon ?? raw.recommended_horizon ?? raw.tenure ?? raw.time_horizon ?? "3-5 Years");
-  const liquidity = String(raw.liquidity ?? raw.liquidity_type ?? raw.lock_in ?? raw.lock_in_period ?? "High (T+1)");
-  const regulatory_status = String(raw.regulatory_status ?? raw.regulation ?? raw.regulator ?? raw.compliance ?? "SEBI Registered");
-  const source = String(raw.source ?? raw.data_source ?? raw.reference ?? "Supabase Registry");
-  const last_updated = String(raw.last_updated ?? raw.updated_at ?? raw.created_at ?? new Date().toISOString().split("T")[0]);
-  const goal_type = String(raw.goal_type ?? raw.suitable_for ?? raw.goal ?? raw.category_goal ?? "Wealth Creation");
-  const description = raw.description || raw.details || raw.notes ? String(raw.description || raw.details || raw.notes) : undefined;
+  // Parse horizons
+  let hMin = typeof raw.horizon_min_years === "number" ? raw.horizon_min_years : parseInt(String(raw.horizon_min_years || ""), 10);
+  let hMax = typeof raw.horizon_max_years === "number" ? raw.horizon_max_years : parseInt(String(raw.horizon_max_years || ""), 10);
+  if (isNaN(hMin) || hMin <= 0) hMin = 3;
+  if (isNaN(hMax) || hMax < hMin) hMax = hMin + 2;
+
+  const lock_in_years = typeof raw.lock_in_years === "number" ? raw.lock_in_years : raw.lock_in_years ? parseInt(String(raw.lock_in_years), 10) : null;
+  const liquidity = String(raw.liquidity ?? "Standard");
+  const goal_types = raw.goal_types ? (Array.isArray(raw.goal_types) ? raw.goal_types : String(raw.goal_types)) : null;
+  const regulatory_status = String(raw.regulatory_status ?? "SEBI / RBI Regulated");
+  const source_name = String(raw.source_name ?? raw.source ?? "Database");
+  const source_url = raw.source_url ? String(raw.source_url) : null;
+  const last_updated = String(raw.last_updated ?? new Date().toISOString().split("T")[0]);
+
+  // Identifiers (Do not display empty fields)
+  const isin = raw.isin && String(raw.isin).trim().length > 0 ? String(raw.isin).trim() : null;
+  const ticker_symbol = raw.ticker_symbol && String(raw.ticker_symbol).trim().length > 0 ? String(raw.ticker_symbol).trim() : null;
+  const exchange = raw.exchange && String(raw.exchange).trim().length > 0 ? String(raw.exchange).trim() : null;
+  const currency = raw.currency && String(raw.currency).trim().length > 0 ? String(raw.currency).trim() : "INR";
+  const data_as_of = raw.data_as_of && String(raw.data_as_of).trim().length > 0 ? String(raw.data_as_of).trim() : null;
+  const product_status = raw.product_status ? String(raw.product_status) : "Active";
+  const is_active = raw.is_active !== undefined ? Boolean(raw.is_active) : true;
+
+  const indicative_return_range = formatIndicativeReturn(retMin, retMax);
+  const horizon = formatHorizonYears(hMin, hMax);
 
   return {
     id,
     name,
     type,
     provider,
-    risk,
-    indicative_return_range,
-    minimum_investment,
-    horizon,
-    liquidity,
-    regulatory_status,
-    source,
-    last_updated,
-    goal_type,
     description,
+    risk_level,
+    expected_return_min: retMin,
+    expected_return_max: retMax,
+    minimum_investment: minInv,
+    horizon_min_years: hMin,
+    horizon_max_years: hMax,
+    lock_in_years,
+    liquidity,
+    goal_types,
+    regulatory_status,
+    source_name,
+    source_url,
+    last_updated,
+    isin,
+    ticker_symbol,
+    exchange,
+    currency,
+    data_as_of,
+    product_status,
+    is_active,
+
+    indicative_return_range,
+    horizon,
+    risk: risk_level,
+    source: source_name,
     raw,
   };
 }
 
 /**
- * Dynamically fetches investment records from the user's existing Supabase table.
+ * Dynamically fetches investment records strictly from `investment_products`.
  * Does NOT modify, create, or seed any table.
  */
 export async function fetchInvestmentsFromSupabase(): Promise<{
@@ -273,31 +366,40 @@ export async function fetchInvestmentsFromSupabase(): Promise<{
   tableName: string;
 }> {
   const supabase = createClient();
-  const preferredTable = process.env.NEXT_PUBLIC_INVESTMENTS_TABLE || "investments";
-  const candidateTables = [preferredTable, "investment_products", "products", "investment"];
+  const tableName = "investment_products";
 
-  let lastError: string | null = null;
-  let resolvedTable = preferredTable;
+  try {
+    const { data, error } = await supabase
+      .from(tableName)
+      .select("*");
 
-  for (const table of candidateTables) {
-    try {
-      const { data, error } = await supabase.from(table).select("*");
-      if (!error && Array.isArray(data)) {
-        resolvedTable = table;
-        const normalized = data.map((item, idx) => normalizeInvestment(item as Record<string, unknown>, idx));
-        return { data: normalized, error: null, tableName: resolvedTable };
-      }
-      if (error) {
-        lastError = error.message;
-      }
-    } catch (e: unknown) {
-      lastError = e instanceof Error ? e.message : String(e);
+    if (error) {
+      return {
+        data: [],
+        error: error.message,
+        tableName,
+      };
     }
-  }
 
-  return {
-    data: [],
-    error: lastError,
-    tableName: preferredTable,
-  };
+    if (Array.isArray(data)) {
+      // Filter active products if `is_active` flag is set
+      const activeOnly = data.filter((item) => {
+        if (item && typeof item === "object" && "is_active" in item) {
+          return (item as { is_active?: boolean | null }).is_active !== false;
+        }
+        return true;
+      });
+
+      const normalized = activeOnly.map((item, idx) =>
+        normalizeInvestment(item as Record<string, unknown>, idx)
+      );
+
+      return { data: normalized, error: null, tableName };
+    }
+
+    return { data: [], error: null, tableName };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : "Failed to query Supabase.";
+    return { data: [], error: msg, tableName };
+  }
 }

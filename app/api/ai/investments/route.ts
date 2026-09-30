@@ -1,14 +1,24 @@
 /**
  * POST /api/ai/investments
  * Unified AI Investment Assistant.
- * Strictly uses only investment products and data fetched from Supabase.
- * Incorporates the user's active calculator goal and financial inputs.
+ *
+ * Strict Compliance:
+ * 1. ONLY discusses investment products that exist in the Supabase results.
+ * 2. Uses exact phrasing: "Database-listed indicative return range: X–Y%."
+ * 3. Never says "This investment will give you X%."
+ * 4. Never describes crypto FIU-IND registration as government approval or endorsement.
+ * 5. If information is missing from Supabase, explicitly states that the information is unavailable.
+ * 6. Never invents investment names, ISINs, ticker symbols, providers, returns, or market data.
  */
 
 import { NextRequest, NextResponse } from "next/server";
 import { generateChat, generateChatStream } from "@/app/lib/gemini";
 import { recordQuotaUsage, attachQuotaCookie } from "@/app/lib/ai-quota";
-import type { InvestmentProduct, UserFinancialGoal } from "@/app/lib/investments";
+import {
+  type InvestmentProduct,
+  type UserFinancialGoal,
+  formatIndicativeReturn,
+} from "@/app/lib/investments";
 import { formatINR } from "@/app/lib/finance";
 
 interface InvestmentAssistantRequest {
@@ -19,7 +29,7 @@ interface InvestmentAssistantRequest {
   stream?: boolean;
 }
 
-// ── Deterministic Grounded Fallback ──────────────────────────────────────────
+// ── Grounded Fallback Response ────────────────────────────────────────────────
 
 function buildFallbackInvestmentResponse(
   message: string,
@@ -32,90 +42,86 @@ function buildFallbackInvestmentResponse(
   if (products.length === 0) {
     return `### ⚠️ No Investment Products Detected in Supabase Database
 
-Your autoX database table is currently empty or has not been created yet. As per application safety protocols, I do **not** invent or generate hypothetical financial products.
+Your \`investment_products\` table in Supabase currently contains **0 records**. As required by financial safety guidelines, I do not invent or hallucinate financial products or ticker symbols.
 
-**Active Goal Parameters:**
-• Target Maturity: **${formatINR(goal.targetMaturityAmount)}** by year **${goal.targetMaturityYear}** (${tenure}-year horizon)
+**Your Active Goal Summary (from Calculator):**
+• Target Maturity Amount: **${formatINR(goal.targetMaturityAmount)}** by **${goal.targetMaturityYear}** (${tenure}-year horizon)
 • Real Purchasing Power Target: **${formatINR(goal.inflationAdjustedTarget)}**
-• Monthly Commitment: **${formatINR(goal.monthlyInvestment)}/month** (${goal.annualStepUpPercent}% annual step-up)
-• Benchmark Inflation: **${goal.inflationPercent}%** | Target Return: **${goal.expectedGrowthPercent}%**
+• Monthly Investment: **${formatINR(goal.monthlyInvestment)}/month** (${goal.annualStepUpPercent}% annual step-up)
+• Configured Inflation: **${goal.inflationPercent}%** | Target Return: **${goal.expectedGrowthPercent}%**
 
-**Next Steps:**
-1. Populate your Supabase database table (\`investments\`) with verified SEBI / RBI / FIU-IND registered instruments.
-2. Return to this Assistant to receive real-time, database-verified matching and funding gap calculations.`;
+**Next Step:**
+Upload your investment dataset into the Supabase \`investment_products\` table. Once rows are inserted, I will immediately analyze them against your goal.`;
   }
 
-  // Find best products
   const topProduct = products[0];
   const secondProduct = products.length > 1 ? products[1] : null;
 
-  if (q.includes("gap") || q.includes("shortfall") || q.includes("funding")) {
-    return `### 📊 Funding Gap & Goal Feasibility Analysis
+  if (q.includes("gap") || q.includes("shortfall") || q.includes("contribution")) {
+    const retMin = topProduct.expected_return_min;
+    return `### 📊 Contribution Gap & Goal Feasibility Analysis
 
-**Your Goal Target:** ${formatINR(goal.targetMaturityAmount)} by ${goal.targetMaturityYear} (${formatINR(goal.inflationAdjustedTarget)} in today's purchasing power).
+**Active Target:** ${formatINR(goal.targetMaturityAmount)} by ${goal.targetMaturityYear} (${formatINR(goal.inflationAdjustedTarget)} in today's purchasing power).
 
 **Database Insights:**
-• **Monthly Investment:** ${formatINR(goal.monthlyInvestment)}/mo with ${goal.annualStepUpPercent}% annual step-up
-• **Reference Database Product:** [DATABASE] **${topProduct.name}** by *${topProduct.provider}*
-  - Indicative Return: [HISTORICAL / INDICATIVE] **${topProduct.indicative_return_range}** (Non-guaranteed)
-  - Minimum Investment: [DATABASE] ${formatINR(topProduct.minimum_investment)}
-  - Regulation: [DATABASE] ${topProduct.regulatory_status}
+• **Monthly Commitment:** ${formatINR(goal.monthlyInvestment)}/month (${goal.annualStepUpPercent}% annual step-up)
+• **Reference Product:** ${topProduct.name} (${topProduct.provider})
+  - **Indicative Return:** ${formatIndicativeReturn(topProduct.expected_return_min, topProduct.expected_return_max)}
+  - **Minimum Investment:** ${formatINR(topProduct.minimum_investment)}
+  - **Regulatory Status:** ${topProduct.regulatory_status}
 
 **Calculated Projection:**
-At an indicative rate within this product's range, your monthly contributions compound to meet or come close to your nominal target. If inflation rises above ${goal.inflationPercent}%, your purchasing power requirement increases.
+At the database-listed indicative return range lower bound of ${retMin}%, mathematical compounding projects a corpus that may experience a slight shortfall if inflation stays above ${goal.inflationPercent}%.
 
-💡 **Actionable Suggestion:**
-To build a safety margin against inflation, consider testing an increase of **${formatINR(Math.round(goal.monthlyInvestment * 1.2))}/month** in the Calculator.
-[Open Calculator to Model Scenarios](/calculator)`;
+💡 **Suggested Action:**
+Consider testing a review of your monthly contribution to approximately **${formatINR(Math.round(goal.monthlyInvestment * 1.15))}/month** in the Calculator to build an inflation buffer.
+[Open Calculator with Pre-filled Values](/calculator?monthly=${Math.round(goal.monthlyInvestment * 1.15)}&years=${tenure}&return=${topProduct.expected_return_min})`;
   }
 
   if (q.includes("compare") && secondProduct) {
-    return `### ⚖️ Side-by-Side Comparison of Database Options
+    return `### ⚖️ Side-by-Side Comparison of Supabase Products
 
-Here is a factual comparison based strictly on your Supabase records:
+Here is a factual comparison strictly derived from your database:
 
-| Feature | Option 1: ${topProduct.name} | Option 2: ${secondProduct.name} |
+| Feature | ${topProduct.name} | ${secondProduct.name} |
 | :--- | :--- | :--- |
 | **Category** | ${topProduct.type} | ${secondProduct.type} |
 | **Provider** | ${topProduct.provider} | ${secondProduct.provider} |
-| **Indicative Return** | ${topProduct.indicative_return_range} *(Indicative)* | ${secondProduct.indicative_return_range} *(Indicative)* |
-| **Risk Tier** | ${topProduct.risk} | ${secondProduct.risk} |
+| **Indicative Return** | ${topProduct.expected_return_min}% – ${topProduct.expected_return_max}% | ${secondProduct.expected_return_min}% – ${secondProduct.expected_return_max}% |
+| **Risk Level** | ${topProduct.risk_level} | ${secondProduct.risk_level} |
 | **Min. Investment** | ${formatINR(topProduct.minimum_investment)} | ${formatINR(secondProduct.minimum_investment)} |
 | **Horizon** | ${topProduct.horizon} | ${secondProduct.horizon} |
+| **Lock-in** | ${topProduct.lock_in_years ? `${topProduct.lock_in_years} Years` : "None"} | ${secondProduct.lock_in_years ? `${secondProduct.lock_in_years} Years` : "None"} |
 | **Liquidity** | ${topProduct.liquidity} | ${secondProduct.liquidity} |
+| **Identifiers** | ${topProduct.isin ? `ISIN: ${topProduct.isin}` : "Unavailable"} | ${secondProduct.isin ? `ISIN: ${secondProduct.isin}` : "Unavailable"} |
 | **Regulatory Status** | ${topProduct.regulatory_status} | ${secondProduct.regulatory_status} |
 
-**Which fits your goal better?**
-• If your priority is capital preservation over your ${tenure}-year horizon, evaluate **${topProduct.risk === "Low" ? topProduct.name : secondProduct.name}**.
-• If you need to beat your ${goal.inflationPercent}% inflation benchmark with aggressive growth, evaluate **${topProduct.name}**.
-
-*Disclaimer: Return ranges are historical/indicative from your database and do not guarantee future returns.*`;
+*Safety Notice: Database-listed indicative return ranges do not guarantee future performance. Investments are subject to market risks.*`;
   }
 
-  // Default response
-  return `### 🎯 Investment Analysis for Your ${tenure}-Year Goal
+  return `### 🎯 Goal Alignment Analysis for ${tenure}-Year Horizon
 
-Based on your active goal to reach **${formatINR(goal.targetMaturityAmount)}** (${formatINR(goal.inflationAdjustedTarget)} real purchasing power) by **${goal.targetMaturityYear}**:
+Evaluating your active target of **${formatINR(goal.targetMaturityAmount)}** by **${goal.targetMaturityYear}**:
 
-**Database Recommendations from Supabase:**
-
+**Database Investment Option:**
 1. **${topProduct.name}**
-   • **Provider:** [DATABASE] ${topProduct.provider}
-   • **Category:** [DATABASE] ${topProduct.type}
-   • **Indicative Return:** [HISTORICAL / INDICATIVE] ${topProduct.indicative_return_range} *(Non-guaranteed)*
-   • **Horizon Match:** Recommended horizon of ${topProduct.horizon} fits your ${tenure}-year timeline.
-   • **Affordability:** Minimum investment of ${formatINR(topProduct.minimum_investment)} is covered by your ${formatINR(goal.monthlyInvestment)}/month allocation.
-   • **Compliance:** [DATABASE] ${topProduct.regulatory_status}
+   • **Provider:** ${topProduct.provider}
+   • **Category:** ${topProduct.type}
+   • **Return Range:** ${formatIndicativeReturn(topProduct.expected_return_min, topProduct.expected_return_max)}
+   • **Risk Level:** ${topProduct.risk_level}
+   • **Why it matches your goal:** ${topProduct.horizon} horizon · ${topProduct.risk_level} risk · ${formatINR(topProduct.minimum_investment)} minimum investment
+   • **Identifiers:** ${topProduct.isin ? `ISIN: ${topProduct.isin}` : topProduct.ticker_symbol ? `Ticker: ${topProduct.ticker_symbol}` : "Not applicable"}
+   • **Compliance:** ${topProduct.regulatory_status}
 
 ${secondProduct ? `2. **${secondProduct.name}**
-   • **Provider:** [DATABASE] ${secondProduct.provider}
-   • **Indicative Return:** [HISTORICAL / INDICATIVE] ${secondProduct.indicative_return_range}
-   • **Risk Tier:** [DATABASE] ${secondProduct.risk}
-   • **Liquidity:** [DATABASE] ${secondProduct.liquidity}` : ""}
+   • **Provider:** ${secondProduct.provider}
+   • **Return Range:** ${formatIndicativeReturn(secondProduct.expected_return_min, secondProduct.expected_return_max)}
+   • **Risk Tier:** ${secondProduct.risk_level}
+   • **Horizon:** ${secondProduct.horizon}` : ""}
 
-💡 **Next Step:** You can pre-fill any option's return into the Calculator by clicking **"Calculate for My Goal"** on the investment card.
+💡 **Navigation:** Click **"Calculate for My Goal"** on any card to model these numbers in the Calculator.
 
-*Disclaimer: Database records are indicative. Mutual fund and securities investments are subject to market risks.*`;
+*Disclaimer: Return figures represent database-listed indicative return ranges. Past performance does not guarantee future results.*`;
 }
 
 // ── Main Route Handler ────────────────────────────────────────────────────────
@@ -139,28 +145,34 @@ export async function POST(request: NextRequest) {
 
     const tenure = Math.max(1, goal.targetMaturityYear - goal.startYear);
 
-    // Format Database Products block
+    // Format Database Products block strictly from Supabase
     const productsBlock = products.length > 0
       ? products.map((p, idx) => `
-[PRODUCT ${idx + 1}]
+[DATABASE PRODUCT ${idx + 1}]
 - ID: ${p.id}
 - Name: ${p.name}
 - Type: ${p.type}
 - Provider: ${p.provider}
-- Risk Level: ${p.risk}
-- Indicative Return Range: ${p.indicative_return_range}
+- Risk Level: ${p.risk_level}
+- Expected Return Min: ${p.expected_return_min}%
+- Expected Return Max: ${p.expected_return_max}%
 - Minimum Investment: ₹${p.minimum_investment.toLocaleString("en-IN")}
-- Horizon: ${p.horizon}
+- Horizon: ${p.horizon_min_years} to ${p.horizon_max_years} years
+- Lock-in: ${p.lock_in_years ? `${p.lock_in_years} years` : "None"}
 - Liquidity: ${p.liquidity}
+- Goal Types: ${p.goal_types || "General Wealth"}
 - Regulatory Status: ${p.regulatory_status}
-- Data Source: ${p.source}
+- Source: ${p.source_name} (${p.source_url || "No URL"})
 - Last Updated: ${p.last_updated}
-- Goal Type: ${p.goal_type || "General Wealth"}
-- Notes/Description: ${p.description || "N/A"}`).join("\n")
-      : "NO PRODUCTS IN DATABASE. Inform the user that the Supabase investments table has 0 records.";
+- Data As Of: ${p.data_as_of || "Unavailable"}
+- ISIN: ${p.isin || "Unavailable"}
+- Ticker: ${p.ticker_symbol || "Unavailable"}
+- Exchange: ${p.exchange || "Unavailable"}
+- Description: ${p.description || "Unavailable"}`).join("\n")
+      : "NO PRODUCTS IN DATABASE (investment_products table has 0 rows).";
 
     const systemInstruction = `You are autoX's Unified AI Investment Advisor.
-You advise Indian investors by strictly combining their active financial calculator goal with dynamic data fetched from their Supabase database.
+You advise Indian users strictly using their active calculator goal and investment products fetched from their Supabase database.
 
 ========================
 USER'S ACTIVE FINANCIAL GOAL (From Future Value Calculator):
@@ -170,7 +182,7 @@ USER'S ACTIVE FINANCIAL GOAL (From Future Value Calculator):
 - Monthly Investment: ₹${goal.monthlyInvestment.toLocaleString("en-IN")}/month
 - Annual Step-Up: ${goal.annualStepUpPercent}% per year
 - Time Horizon: ${tenure} years (${goal.startYear} to ${goal.targetMaturityYear})
-- Target Expected Growth: ${goal.expectedGrowthPercent}% p.a.
+- Expected Growth Rate: ${goal.expectedGrowthPercent}% p.a.
 - Configured Inflation Benchmark: ${goal.inflationPercent}% p.a.
 - Beats Inflation Currently: ${goal.beatsInflation ? "YES" : "NO"}
 - Goal Type: ${goal.goalType || "Wealth Creation"}
@@ -182,20 +194,19 @@ DYNAMIC SUPABASE DATABASE PRODUCTS:
 ${productsBlock}
 
 ========================
-STRICT AI COMPLIANCE RULES:
+CRITICAL FINANCIAL SAFETY & COMPLIANCE RULES:
 ========================
-1. ONLY USE AND REFERENCE THE PRODUCTS PROVIDED IN THE SUPABASE LIST ABOVE. NEVER invent investment products, mutual funds, companies, returns, ticker symbols, or regulatory bodies not present in this list.
-2. If products list is empty, state clearly that no records exist in the Supabase database yet and explain investment fundamentals or how to add products to Supabase.
-3. NEVER guarantee returns or present projections as certain outcomes. Clearly distinguish between:
-   - [DATABASE]: Verifiable facts from the database (Provider, minimum investment, liquidity, regulatory status).
-   - [HISTORICAL / INDICATIVE]: Indicative return ranges (explicitly note these are past/indicative and NOT guaranteed).
-   - [CALCULATED PROJECTION]: Compound mathematical projections based on formulas.
-   - [ASSUMPTION]: User's inflation rate or step-up assumptions.
-4. Analyze potential funding gaps: compare what the available products' indicative returns can produce against the user's target of ₹${goal.targetMaturityAmount.toLocaleString("en-IN")}. If a gap exists, suggest adjusting the monthly investment or tenure, and suggest testing it in the Calculator.
-5. Provide actionable guidance: invite the user to use "Calculate for My Goal" to model specific products in the Calculator.
-6. Explain financial terminology simply (e.g., SIP, SEBI compliance, FIU-IND registration, Lock-in, Sovereign Guarantee).
-7. Format with clean GitHub markdown, bullet points, and bold text. Keep answers structured and concise (2-4 paragraphs or a table + bullet points).
-8. Always conclude with a regulatory disclaimer regarding market risks.`;
+1. ONLY USE AND REFERENCE THE PRODUCTS PROVIDED IN THE SUPABASE LIST ABOVE. NEVER invent investment products, companies, ISINs, ticker symbols, historical returns, or regulatory bodies not present in this list.
+2. If products list is empty, state clearly: "Your Supabase table contains 0 records. Once investment products are uploaded to Supabase, I can analyze them against your goal."
+3. NEVER say: "This investment will give you X%."
+   INSTEAD use: "Database-listed indicative return range: X–Y%."
+4. NEVER guarantee returns or present projections as certain outcomes.
+5. NEVER describe an investment as risk-free unless the database explicitly supports that factual description.
+6. Do NOT treat historical returns as future guarantees.
+7. For crypto: DO NOT describe FIU-IND registration as government approval or endorsement. State that FIU-IND registration is an AML/CFT compliance requirement, not an official investment guarantee or endorsement.
+8. If information is missing from Supabase (e.g. description, ISIN, ticker), explicitly say that the information is unavailable in the database.
+9. Identify potential contribution gaps: compare what the available database products' indicative returns project against the user's target of ₹${goal.targetMaturityAmount.toLocaleString("en-IN")}. If a gap exists, suggest reviewing the monthly contribution and provide navigation advice to the Calculator.
+10. Format with clean GitHub markdown. Conclude with a clear regulatory disclaimer regarding market risks.`;
 
     // Convert history
     const geminiHistory = history.map((m) => ({
